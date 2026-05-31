@@ -1,0 +1,28 @@
+[package]
+name = "pi-edon"
+description = "Owned edon/libnode boundary for the Pi GPUI backend"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+
+[dependencies]
+edon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serial_test.workspace = true
+tempfile.workspace = true

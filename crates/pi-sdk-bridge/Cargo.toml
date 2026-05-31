@@ -1,0 +1,20 @@
+[package]
+name = "pi-sdk-bridge"
+description = "Typed Rust client for the embedded Pi SDK bridge"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+pi-bridge-types = { path = "../pi-bridge-types" }
+pi-node-host = { path = "../pi-node-host" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+parking_lot.workspace = true

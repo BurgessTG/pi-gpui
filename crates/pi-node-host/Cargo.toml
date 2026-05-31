@@ -1,0 +1,24 @@
+[package]
+name = "pi-node-host"
+description = "Safe async Rust host for embedded Node Pi SDK runtime"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+parking_lot.workspace = true
+pi-bridge-types = { path = "../pi-bridge-types" }
+pi-edon = { path = "../pi-edon" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+serial_test.workspace = true
+tempfile.workspace = true

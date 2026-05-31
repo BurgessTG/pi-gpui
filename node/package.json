@@ -1,0 +1,26 @@
+{
+  "name": "@pi-gpui/backend-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run",
+    "sync-protocol": "../scripts/sync-protocol.sh --write",
+    "check-protocol": "../scripts/sync-protocol.sh --check"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.78.0",
+    "@earendil-works/pi-coding-agent": "0.78.0",
+    "@earendil-works/pi-tui": "0.78.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

@@ -1,0 +1,21 @@
+[package]
+name = "pi-bridge-types"
+description = "Versioned Rust/Node bridge protocol for the Pi GPUI backend"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

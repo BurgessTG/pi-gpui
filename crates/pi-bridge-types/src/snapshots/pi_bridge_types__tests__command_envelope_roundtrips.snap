@@ -1,0 +1,17 @@
+---
+source: crates/pi-bridge-types/src/lib.rs
+assertion_line: 134
+expression: restored
+---
+{
+  "version": 1,
+  "requestId": "req-1",
+  "command": {
+    "type": "prompt",
+    "payload": {
+      "text": "hello",
+      "images": [],
+      "streamingBehavior": null
+    }
+  }
+}

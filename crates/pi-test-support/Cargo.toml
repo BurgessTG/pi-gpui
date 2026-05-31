@@ -1,0 +1,14 @@
+[package]
+name = "pi-test-support"
+description = "Test support for Pi GPUI backend crates"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pi-bridge-types = { path = "../pi-bridge-types" }
+tempfile.workspace = true

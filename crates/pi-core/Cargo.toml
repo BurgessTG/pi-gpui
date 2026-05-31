@@ -1,0 +1,16 @@
+[package]
+name = "pi-core"
+description = "GPUI-independent backend state and reducers for Pi frontend"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pi-bridge-types = { path = "../pi-bridge-types" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,12 @@
+/home/burgess/pi-gpui/vendor/edon/target/debug/deps/libloading-1c3bf2b9f23c1038.d: /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/lib.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/changelog.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/error.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/mod.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/unix/mod.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/unix/consts.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/safe.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/util.rs
+
+/home/burgess/pi-gpui/vendor/edon/target/debug/deps/liblibloading-1c3bf2b9f23c1038.rmeta: /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/lib.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/changelog.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/error.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/mod.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/unix/mod.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/unix/consts.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/safe.rs /home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/util.rs
+
+/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/lib.rs:
+/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/changelog.rs:
+/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/error.rs:
+/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/mod.rs:
+/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/unix/mod.rs:
+/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/os/unix/consts.rs:
+/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/safe.rs:
+/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libloading-0.8.9/src/util.rs:
