@@ -3,3 +3,6 @@
 /node/dist
 /.libnode
 *.log
+
+/vendor/edon/target
+**/.pi-lens
