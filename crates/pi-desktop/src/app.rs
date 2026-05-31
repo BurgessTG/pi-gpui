@@ -356,6 +356,7 @@ impl PiDesktop {
 
         Settings::new("pi-settings")
             .sidebar_width(px(148.0))
+            .search_visible(false)
             .with_size(Size::Small)
             .with_group_variant(GroupBoxVariant::Outline)
             .pages(vec![
@@ -462,9 +463,6 @@ fn auth_settings_content(
                 .h(px(124.0))
                 .overflow_y_scroll()
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                .border_1()
-                .border_color(theme::hairline())
-                .bg(theme::app_bg())
                 .p_2()
                 .flex()
                 .flex_wrap()

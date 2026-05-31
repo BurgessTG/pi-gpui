@@ -44,6 +44,7 @@ fn main() {
                 eprintln!("failed to load custom fonts: {error:#}");
             }
             gpui_component::init(cx);
+            gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
             let bounds = Bounds::centered(None, size(px(1180.0), px(780.0)), cx);
             if let Err(error) = cx.open_window(
                 WindowOptions {

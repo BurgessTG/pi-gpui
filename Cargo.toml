@@ -29,6 +29,9 @@ panic = "warn"
 todo = "warn"
 unimplemented = "warn"
 
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }
+
 [workspace.dependencies]
 anyhow = "1.0.100"
 async-trait = "0.1.89"
