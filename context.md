@@ -1,139 +1,52 @@
 # Code Context
 
 ## Files Retrieved
-1. `crates/pi-desktop/src/ui.rs` (lines 24-45) - provider env hint and current provider-logo slug/file mapping.
-2. `crates/pi-desktop/src/ui.rs` (lines 47-59) - initials fallback for providers without a logo.
-3. `crates/pi-desktop/src/app.rs` (lines 431-527) - auth settings renders provider icon grid and calls `provider_logo`.
-4. `crates/pi-desktop/src/app.rs` (lines 528-741) - selected provider auth flow, browser-auth special cases, and `provider_logo` SVG/fallback logic.
-5. `crates/pi-desktop/src/backend.rs` (lines 13-18, 27-45, 80-83) - desktop initializes Node backend and loads auth statuses shown in UI.
-6. `crates/pi-bridge-types/src/state.rs` (lines 19-26, 95-101) - Rust bridge types carrying provider slugs/display names.
-7. `node/src/pi/runtime.ts` (lines 480-541, 640-687, 704-717) - Node backend creates `ModelRegistry`, derives auth provider list from models, and maps model descriptors.
-8. `node/node_modules/@earendil-works/pi-coding-agent/dist/core/model-registry.js` (lines 344-360, 383-521, 626-635) - SDK model registry pulls built-ins from pi-ai, accepts custom providers, and resolves display names.
-9. `node/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/models.js` (lines 1-18) - `getProviders()` returns keys of generated `MODELS`.
-10. `node/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/models.generated.js` (lines 1-20, 16220-16251; first provider occurrences listed below) - generated built-in provider/model source.
-11. `node/node_modules/@earendil-works/pi-coding-agent/dist/core/provider-display-names.js` (lines 1-32) - SDK built-in display names for most providers.
-12. `node/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/utils/oauth/index.js` (lines 20-68), `.../github-copilot.js` (lines 240-268), `.../openai-codex.js` (lines 444-459) - OAuth providers add display names for `github-copilot` and `openai-codex`.
-13. `crates/pi-sdk-bridge/tests/mock_transport.rs` (lines 73-99) - bridge auth command test uses `openai` only.
-14. `crates/pi-node-host/tests/embedded_pi.rs` (lines 103-214, 725-805) - embedded tests cover auth/status for faux/openai and optional real provider.
-15. `Cargo.toml` (lines 1-48), `node/package.json` (lines 1-24), `xtask/src/main.rs` (lines 6-35) - validation command entry points.
+1. `crates/pi-desktop/src/app.rs` (lines 71-134, 247-270) - root `PiDesktop` state, chat/transcript maps, render throttle flags.
+2. `crates/pi-desktop/src/app/render.rs` (lines 6-24, 94-333, 385-544) - root render and workspace/canvas/pinned composition.
+3. `crates/pi-desktop/src/app/backend_flow.rs` (lines 1-283) - backend subscriptions, bridge event application, render throttling.
+4. `crates/pi-desktop/src/app/chat_actions.rs` (lines 16-120) - chat submit/stream lifecycle.
+5. `crates/pi-desktop/src/app/canvas_actions.rs` (lines 162-367) - canvas drag/draw/zoom updates and throttled render requests.
+6. `crates/pi-desktop/src/components/workspace_canvas.rs` (lines 1-929) - canvas element tree, node visibility, drawing/grid/text-box rendering.
+7. `crates/pi-desktop/src/components/chat_node.rs` (lines 1-777) - chat node, transcript body, markdown/tool/composer rendering.
+8. `crates/pi-desktop/src/components/pinned_panels.rs` (lines 17-54) - pinned node panel rendering path.
+9. `crates/pi-desktop/src/workspace/canvas.rs` (lines 1-687) - `CanvasState` model and mutation operations.
+10. `crates/pi-desktop/src/workspace/state.rs` (lines 1-488) - workspace/tab wrappers around active canvas and pinned layout.
+11. `crates/pi-desktop/src/chat/transcript.rs` (lines 1-418) - transcript storage and bridge event parsing.
 
 ## Key Code
-
-### Runtime provider slugs
-The desktop does not hard-code the provider list. It asks `BackendSession::collect_data()` for `client.auth_status(None)` (`crates/pi-desktop/src/backend.rs:80-83`). Node handles that with:
-
-```ts
-// node/src/pi/runtime.ts:640-657
-const providers = provider
-  ? [provider]
-  : Array.from(new Set((this.modelRegistry?.getAll() ?? []).map((model) => model.provider))).sort();
-```
-
-`ModelRegistry` loads built-ins from `@earendil-works/pi-ai` and merges custom `models.json` providers (`model-registry.js:344-360`, `383-521`). Therefore custom providers may have arbitrary slugs and will fall back to initials unless mapped.
-
-Current built-in SDK slugs from `getProviders()` (verified with Node import of `pi-ai/dist/models.js`):
-
-- `amazon-bedrock` (first generated occurrence line 9)
-- `anthropic` (1557)
-- `azure-openai-responses` (1974)
-- `cerebras` (2714)
-- `cloudflare-ai-gateway` (2767)
-- `cloudflare-workers-ai` (3380)
-- `deepseek` (3598)
-- `fireworks` (3638)
-- `github-copilot` (3856)
-- `google` (4259)
-- `google-vertex` (4542)
-- `groq` (4769)
-- `huggingface` (5078)
-- `kimi-coding` (5476)
-- `minimax` (5514)
-- `minimax-cn` (5550)
-- `mistral` (5586)
-- `moonshotai` (6064)
-- `moonshotai-cn` (6192)
-- `openai` (6320)
-- `openai-codex` (7060)
-- `opencode` (7170)
-- `opencode-go` (7900)
-- `openrouter` (8113)
-- `together` (12664)
-- `vercel-ai-gateway` (13005)
-- `xai` (15729)
-- `xiaomi` (15850)
-- `xiaomi-token-plan-ams` (15942)
-- `xiaomi-token-plan-cn` (16016)
-- `xiaomi-token-plan-sgp` (16090)
-- `zai` (16164)
-
-### Current logo mapping
-`crates/pi-desktop/src/ui.rs:31-45`:
-
-```rust
-pub fn provider_logo_path(provider: &str) -> Option<String> {
-    let file = match provider {
-        "anthropic" => "anthropic.svg",
-        "openai" | "azure-openai-responses" => "openai.svg",
-        "amazon-bedrock" => "aws.svg",
-        "cerebras" => "cerebras.svg",
-        "cloudflare-ai-gateway" | "cloudflare-workers-ai" => "cloudflare.svg",
-        "deepseek" => "deepseek.svg",
-        "fireworks" => "fireworks.svg",
-        "github-copilot" => "github.svg",
-        _ => return None,
-    };
-    let path = workspace_root().join("assets/provider-logos").join(file);
-    path.exists().then(|| path.display().to_string())
-}
-```
-
-`provider_logo` only renders SVG when that path exists; otherwise it renders initials (`crates/pi-desktop/src/app.rs:722-741`).
-
-### Current asset coverage
-Actual files in `assets/provider-logos/`:
-
-- `anthropic.svg`
-- `cloudflare.svg`
-- `deepseek.svg`
-- `github.svg`
-
-Mapped and working now:
-- `anthropic` -> `anthropic.svg`
-- `cloudflare-ai-gateway`, `cloudflare-workers-ai` -> `cloudflare.svg`
-- `deepseek` -> `deepseek.svg`
-- `github-copilot` -> `github.svg`
-
-Mapped but currently missing asset, so UI falls back to initials:
-- `openai`, `azure-openai-responses` -> missing `openai.svg`
-- `amazon-bedrock` -> missing `aws.svg`
-- `cerebras` -> missing `cerebras.svg`
-- `fireworks` -> missing `fireworks.svg`
-
-Built-in SDK slugs with no mapping at all:
-- `google`, `google-vertex`, `groq`, `huggingface`, `kimi-coding`, `minimax`, `minimax-cn`, `mistral`, `moonshotai`, `moonshotai-cn`, `openai-codex`, `opencode`, `opencode-go`, `openrouter`, `together`, `vercel-ai-gateway`, `xai`, `xiaomi`, `xiaomi-token-plan-ams`, `xiaomi-token-plan-cn`, `xiaomi-token-plan-sgp`, `zai`.
-
-### Existing tests / gaps
-- No direct tests for `provider_logo_path`, logo asset existence, or SDK slug coverage were found.
-- Existing auth bridge tests only exercise `openai` auth commands (`crates/pi-sdk-bridge/tests/mock_transport.rs:73-99`) and embedded provider auth/status (`crates/pi-node-host/tests/embedded_pi.rs:103-214`, `725-805`).
-- `provider_supports_browser_auth` only matches `openai` and `github-copilot` (`crates/pi-desktop/src/app.rs:672-689`); `openai-codex` has SDK OAuth/display-name support but no desktop browser-auth special case.
+- Root state is monolithic: `PiDesktop` owns `workspace_state`, input entity maps, `chat_transcripts: HashMap<(usize, usize), ChatTranscript>`, `streaming_node`, `event_render_scheduled`, and `canvas_render_scheduled` (`app.rs:83-134`). The shared throttle is `FRAME_RENDER_INTERVAL = 8ms` (`app.rs:71-72`).
+- Backend stream events are drained in batches up to 128 (`backend_flow.rs:109-151`), then each `PiSessionEvent` mutates `chat_transcripts[streaming_node]`, updates status, and calls `request_event_render` (`backend_flow.rs:172-185`). `request_event_render` schedules a root `cx.notify()` after 8ms (`backend_flow.rs:254-264`).
+- Root render rebuilds the app (`render.rs:6-24`). Workspace render scans all active nodes, reconciles input/subscriptions (`render.rs:120-189`), scans drawings for text boxes (`render.rs:191-251`), then calls `workspace_canvas(...)` with the full transcript map (`render.rs:271-293`). Pinned mode also rebuilds `pinned_panel_region` (`render.rs:295-323`).
+- Canvas render composes grid, drawings, text boxes, marker layers, all visible unpinned nodes, minimap, and toolbar (`workspace_canvas.rs:168-229`). Visible nodes call `chat_node::chat_node(...)` with their transcript (`workspace_canvas.rs:191-215`). Pinned panels separately find pinned nodes and call `pinned_chat_node_panel` (`pinned_panels.rs:31-54`).
+- Chat body obtains `entries`, `streaming`, `revision`, auto-scrolls on each revision, then renders every entry (`chat_node.rs:291-360`). Assistant entries call `TextView::markdown(..., content.to_owned(), ...)` every render (`chat_node.rs:431-459`).
+- Transcript updates replace full assistant text: `message_update` calls `update_assistant_from_message` (`transcript.rs:149-157`), which computes `message_text`, compares whole strings, assigns the new whole string, and bumps `revision` (`transcript.rs:237-248`). `content_text` clones/joins text parts (`transcript.rs:339-378`); tool updates can pretty-print/truncate JSON (`transcript.rs:343-397`).
 
 ## Architecture
-Desktop UI receives `Vec<ProviderAuthStatus>` from Rust backend. Rust backend calls bridge `auth_status(None)`. Node runtime builds statuses from unique `model.provider` values in SDK `ModelRegistry.getAll()`, plus display names from registered providers/OAuth providers/built-in display-name table. `provider_logo_path` is purely desktop-side and maps slug -> SVG filename, but it suppresses mapped logos when the file is absent. Unmapped or absent assets render initials using SDK display name.
+Current data flow for one streamed node:
+1. `submit_chat_node` clears the input, pushes a user message, sets `streaming_node = Some(key)`, sets `pending = true`, and root-notifies (`chat_actions.rs:16-69`).
+2. Backend bridge events arrive through the subscription loop, are batch-drained, and are applied to the single `streaming_node` transcript (`backend_flow.rs:109-185`).
+3. A coalesced timer root-notifies the entire `PiDesktop` every ~8ms while events keep arriving (`backend_flow.rs:254-264`).
+4. Root render rebuilds workspace UI, canvas layers, visible nodes, and pinned panels (`render.rs:94-333`; `workspace_canvas.rs:168-229`).
+5. The streaming chat node renders the full transcript list and the growing assistant markdown body (`chat_node.rs:291-360`, `431-459`).
+
+Hot paths / likely sluggishness causes:
+- **Root-level invalidation for token updates.** A streaming token dirties `PiDesktop`, not a node-local view, so unchanged tabs/status/canvas/nodes/text boxes are re-evaluated (`backend_flow.rs:178-185`, `254-264`; `render.rs:120-293`).
+- **Full markdown/text work per frame.** Each render passes the whole assistant text into `TextView::markdown`; each message update also reconstructs and compares the whole assistant string. This is likely O(total streamed text) per event/render, possibly O(n²) over a long response (`chat_node.rs:431-459`; `transcript.rs:237-248`, `339-378`).
+- **All transcript entries render every time.** No transcript virtualization or stable per-message entities; historical entries and tool blocks are rebuilt during each root render (`chat_node.rs:347-357`, `476-530`).
+- **Auto-scroll mutates keyed state during render.** `scroll_to_bottom` plus `scroll_revision.update` runs inside `render_body` on every transcript revision, adding layout/scroll work to the render path (`chat_node.rs:302-319`).
+- **Canvas work happens even for chat-only updates.** `workspace_canvas` recreates grid/drawing/textbox/node children; drawings are filtered and cloned (`workspace_canvas.rs:234-269`), pen paths are rebuilt point-by-point during paint (`workspace_canvas.rs:386-429`), and grid lines are repainted (`workspace_canvas.rs:803-859`).
+- **Event render requests are unconditional for session events.** `observe_session_event` returns no changed flag, and `request_event_render` is called for every `PiSessionEvent` while streaming, even if the event produced no transcript change (`backend_flow.rs:178-185`; `transcript.rs:78-97`).
 
 ## Start Here
-Open `crates/pi-desktop/src/ui.rs` first. It contains the only provider slug -> logo file mapping, and any completion work should align it with the 32 built-in SDK provider slugs plus current `assets/provider-logos/` files.
+Start with `crates/pi-desktop/src/app/backend_flow.rs`: it is the highest-leverage choke point because it turns backend stream events into root-wide 8ms invalidations. Then inspect `crates/pi-desktop/src/components/chat_node.rs` and `crates/pi-desktop/src/chat/transcript.rs` for the full-text markdown/render work.
 
-## Validation commands
-Focused/available:
-- `cargo check -p pi-desktop --all-targets`
-- `cargo test -p pi-sdk-bridge`
-- `cargo test -p pi-node-host --test embedded_pi` (requires libnode/bootstrap; some tests skip if config missing)
-- `npm --prefix node run typecheck`
-- `npm --prefix node run build`
-- `npm --prefix node test`
+## Refactor Recommendations
+1. Split root state into smaller GPUI entities: `WorkspaceCanvasView`, `ChatNodeView`, and per-node `TranscriptState`. Backend events should update/notify only the affected transcript/node, not `PiDesktop`.
+2. Make `observe_session_event` return a change/delta result; batch all envelopes first, then schedule one render only if visible transcript/status changed.
+3. Cache or incrementally render assistant content: store chunks/rope or diff suffixes, render streaming text cheaply, and parse markdown on completion or at a lower cadence.
+4. Move auto-scroll out of render into a post-update/effect path and throttle it.
+5. Virtualize or key transcript entries so old messages/tools do not rebuild on every token.
+6. Separate canvas layers from chat updates; cache drawing paths/visibility by drawing+viewport revision and avoid cloning visible drawings each render.
+7. Consider raising stream UI cadence to 16-33ms after scoping invalidation; keep canvas interaction cadence separate.
 
-Full existing CI entry point:
-- `cargo run -p xtask -- ci`
-
-Useful slug audit command used during recon:
-- `node --input-type=module -e "import { getProviders } from './node/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/models.js'; console.log(getProviders().sort().join('\\n'))"`
+Open questions: whether `TextView::markdown` internally caches by id/revision, and whether backend `message_update` can provide deltas instead of full message content.

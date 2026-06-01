@@ -1,8 +1,10 @@
 mod app;
 mod backend;
+mod chat;
 mod components;
 mod design;
 mod ui;
+mod workspace;
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -44,7 +46,8 @@ fn main() {
                 eprintln!("failed to load custom fonts: {error:#}");
             }
             gpui_component::init(cx);
-            gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+            app::init(cx);
+            design::theme::apply_component_theme(cx);
             let bounds = Bounds::centered(None, size(px(1180.0), px(780.0)), cx);
             if let Err(error) = cx.open_window(
                 WindowOptions {

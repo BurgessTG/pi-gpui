@@ -1,0 +1,315 @@
+use super::*;
+
+impl PiDesktop {
+    pub(super) fn start_backend(&mut self, cx: &mut Context<Self>) {
+        if self.backend.is_some() {
+            self.run_backend(
+                "Refreshing embedded Pi backend…",
+                "Embedded Pi backend ready.",
+                false,
+                |backend| backend.refresh(),
+                cx,
+            );
+            return;
+        }
+        self.pending = true;
+        self.status = "Starting embedded Pi backend…".into();
+        cx.notify();
+        let cwd = self.cwd.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { BackendSession::connect(cwd) })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                view.pending = false;
+                match result {
+                    Ok(snapshot) => view.apply_snapshot(snapshot, cx),
+                    Err(error) => {
+                        view.backend = None;
+                        view.data = None;
+                        view.status = format!("Backend unavailable: {error:#}").into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn apply_snapshot(&mut self, snapshot: BackendSnapshot, cx: &mut Context<Self>) {
+        self.backend = Some(snapshot.session);
+        self.subscribe_auth_updates(cx);
+        self.subscribe_backend_events(cx);
+        self.apply_data(
+            snapshot.data,
+            "Provider auth loaded. Starting embedded Pi runtime…",
+            cx,
+        );
+        self.start_agent_runtime(cx);
+    }
+
+    pub(super) fn start_agent_runtime(&mut self, cx: &mut Context<Self>) {
+        if self.agent_ready() {
+            return;
+        }
+        let Some(session) = self.backend.clone() else {
+            return;
+        };
+        let cwd = self.cwd.clone();
+        self.status = "Provider auth loaded. Starting embedded Pi runtime…".into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { session.init_runtime(cwd) })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                match result {
+                    Ok(data) => view.apply_data(data, "Embedded Pi runtime ready.", cx),
+                    Err(error) => {
+                        view.status = format!(
+                            "Provider auth loaded, but Pi runtime failed to start: {error:#}"
+                        )
+                        .into();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn subscribe_auth_updates(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.backend.clone() else {
+            return;
+        };
+        let mut receiver = session.subscribe_auth_updates();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let (next_receiver, result) = cx
+                    .background_spawn(async move {
+                        let result = receiver.recv().await;
+                        (receiver, result)
+                    })
+                    .await;
+                receiver = next_receiver;
+                match result {
+                    Ok(update) => {
+                        let _ = this.update(cx, |view, cx| {
+                            view.status = auth_update_status(&update).into();
+                            cx.notify();
+                        });
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub(super) fn subscribe_backend_events(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.backend.clone() else {
+            return;
+        };
+        let mut receiver = session.subscribe_events();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let (next_receiver, result) = cx
+                    .background_spawn(async move {
+                        let result = match receiver.recv().await {
+                            Ok(first) => {
+                                let mut events = Vec::with_capacity(32);
+                                events.push(first);
+                                while events.len() < 128 {
+                                    match receiver.try_recv() {
+                                        Ok(event) => events.push(event),
+                                        Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                                            break;
+                                        }
+                                        Err(
+                                            tokio::sync::broadcast::error::TryRecvError::Lagged(_),
+                                        ) => {
+                                            continue;
+                                        }
+                                        Err(
+                                            tokio::sync::broadcast::error::TryRecvError::Closed,
+                                        ) => {
+                                            break;
+                                        }
+                                    }
+                                }
+                                Ok(events)
+                            }
+                            Err(error) => Err(error),
+                        };
+                        (receiver, result)
+                    })
+                    .await;
+                receiver = next_receiver;
+                match result {
+                    Ok(envelopes) => {
+                        let _ = this.update(cx, |view, cx| {
+                            view.apply_bridge_events(envelopes, cx);
+                        });
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub(super) fn apply_bridge_events(
+        &mut self,
+        envelopes: Vec<BridgeEventEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut session_events = Vec::new();
+        for envelope in envelopes {
+            match envelope.event {
+                BridgeEvent::PiSessionEvent { event } => session_events.push(event),
+                event => {
+                    self.apply_session_events(std::mem::take(&mut session_events), cx);
+                    self.apply_bridge_event(
+                        BridgeEventEnvelope {
+                            version: envelope.version,
+                            event,
+                        },
+                        cx,
+                    );
+                }
+            }
+        }
+        self.apply_session_events(session_events, cx);
+    }
+
+    fn apply_session_events(&mut self, events: Vec<serde_json::Value>, cx: &mut Context<Self>) {
+        if events.is_empty() {
+            return;
+        }
+        let Some(key) = self.streaming_node else {
+            return;
+        };
+        let status = events.last().map(chat_event_status);
+        self.update_chat_transcript(key, cx, |transcript| {
+            for event in &events {
+                transcript.observe_session_event(event);
+            }
+        });
+        if let Some(status) = status {
+            self.status = status.into();
+        }
+    }
+
+    pub(super) fn apply_bridge_event(
+        &mut self,
+        envelope: BridgeEventEnvelope,
+        cx: &mut Context<Self>,
+    ) {
+        match envelope.event {
+            BridgeEvent::PiSessionEvent { event } => {
+                self.apply_session_events(vec![event], cx);
+            }
+            BridgeEvent::StateSnapshot { state } => {
+                if let Some(data) = &mut self.data {
+                    data.state = Some(state);
+                    self.request_event_render(cx);
+                }
+            }
+            BridgeEvent::QueueUpdate { queue } => {
+                if let Some(state) = self.data.as_mut().and_then(|data| data.state.as_mut()) {
+                    state.queue = queue;
+                    self.request_event_render(cx);
+                }
+            }
+            BridgeEvent::FatalError { error } => {
+                self.status = format!("Pi backend error: {}", error.message).into();
+                cx.notify();
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn apply_data(
+        &mut self,
+        data: BackendData,
+        status: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(state) = data.state.as_ref() {
+            let metadata = session_node_metadata(state);
+            self.workspace_state.sync_session_metadata(&metadata);
+            self.hydrate_chat_transcripts_from_state(&metadata, &state.messages, cx);
+        }
+        self.data = Some(data);
+        self.status = status.into();
+    }
+
+    pub(super) fn run_backend(
+        &mut self,
+        pending_status: impl Into<SharedString>,
+        success_status: impl Into<SharedString>,
+        clear_selected_provider: bool,
+        operation: impl FnOnce(Arc<BackendSession>) -> Result<BackendData> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.backend.clone() else {
+            self.status = "Backend is not ready yet.".into();
+            cx.notify();
+            return;
+        };
+        let success_status = success_status.into();
+        self.pending = true;
+        self.status = pending_status.into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async move { operation(session) }).await;
+            let _ = this.update(cx, |view, cx| {
+                view.pending = false;
+                match result {
+                    Ok(data) => {
+                        if clear_selected_provider {
+                            view.selected_provider = None;
+                            view.auth_flow = AuthFlow::Choose;
+                        }
+                        view.apply_data(data, success_status, cx);
+                    }
+                    Err(error) => view.status = format!("Backend error: {error:#}").into(),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn request_event_render(&mut self, cx: &mut Context<Self>) {
+        if self.event_render_scheduled {
+            return;
+        }
+        self.event_render_scheduled = true;
+        cx.spawn(async move |this, cx| {
+            Timer::after(FRAME_RENDER_INTERVAL).await;
+            let _ = this.update(cx, |view, cx| {
+                view.event_render_scheduled = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn request_canvas_render(&mut self, cx: &mut Context<Self>) {
+        if self.canvas_render_scheduled {
+            return;
+        }
+        self.canvas_render_scheduled = true;
+        cx.spawn(async move |this, cx| {
+            Timer::after(FRAME_RENDER_INTERVAL).await;
+            let _ = this.update(cx, |view, cx| {
+                view.canvas_render_scheduled = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+}

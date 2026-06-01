@@ -4,8 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use pi_bridge_types::{
-    AuthSource, BridgeCommand, BridgeResponse, CoreStateSnapshot, InitCommand, ProviderAuthStatus,
-    QueueSnapshot,
+    AuthSource, BridgeCommand, BridgeResponse, CoreStateSnapshot, ForkPosition, InitCommand,
+    OAuthLoginMethod, ProviderAuthStatus, QueueSnapshot,
 };
 use pi_sdk_bridge::{BridgeClient, BridgeClientError, BridgeTransport};
 
@@ -85,6 +85,7 @@ async fn client_maps_auth_commands() -> Result<(), Box<dyn std::error::Error>> {
         BridgeResponse::Ack,
         BridgeResponse::Ack,
         BridgeResponse::Ack,
+        BridgeResponse::Ack,
     ]);
     let client = BridgeClient::new(transport.clone());
     assert_eq!(
@@ -93,8 +94,11 @@ async fn client_maps_auth_commands() -> Result<(), Box<dyn std::error::Error>> {
     );
     client.set_runtime_api_key("openai", "test-key").await?;
     client.set_persisted_api_key("openai", "test-key").await?;
+    client
+        .oauth_login("openai-codex", Some(OAuthLoginMethod::Browser))
+        .await?;
     client.remove_auth("openai").await?;
-    assert_eq!(transport.command_count(), 4);
+    assert_eq!(transport.command_count(), 5);
     Ok(())
 }
 
@@ -120,5 +124,30 @@ async fn client_maps_typed_init_and_prompt() -> Result<(), Box<dyn std::error::E
     assert_eq!(client.init(init).await?, state);
     client.prompt("hello").await?;
     assert_eq!(transport.command_count(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn client_maps_session_lifecycle_commands() -> Result<(), Box<dyn std::error::Error>> {
+    let transport = MockTransport::new(vec![
+        BridgeResponse::Cancelled { cancelled: false },
+        BridgeResponse::Cancelled { cancelled: false },
+        BridgeResponse::Json {
+            value: serde_json::json!({ "cancelled": false }),
+        },
+        BridgeResponse::Ack,
+    ]);
+    let client = BridgeClient::new(transport.clone());
+
+    assert!(!client.new_session(None).await?);
+    assert!(
+        !client
+            .switch_session("/tmp/session.jsonl", Some("/tmp".to_owned()))
+            .await?
+    );
+    client.fork_session("entry-1", ForkPosition::At).await?;
+    client.set_session_name("renamed session").await?;
+
+    assert_eq!(transport.command_count(), 4);
     Ok(())
 }

@@ -6,9 +6,15 @@ The first native frontend is `crates/pi-desktop`.
 
 - Native GPUI app window using `gpui` and `gpui-component`.
 - Official Pi SVG mark from `pi.dev/logo-auto.svg` stored at `assets/pi-logo-auto.svg`.
-- Landing screen with the Pi mark centered slightly above the horizontal median.
-- Slogan: “There are many agent ochestrators, but this one is yours.”
-- Bottom chat bar with multi-line input and send action.
+- Fresh-load workspace landing screen with centered Pi mark and a single `Open Workspace` action.
+- `Open Workspace` flow with an internal tree-based folder picker.
+- Workspace tabs for folder-backed workspaces.
+- Workspace canvas with a plain grid, left-drag panning, mouse-wheel zoom, bottom-left minimap, floating square +/- zoom controls, and floating zoom percentage.
+- Minimap supports node symbols plus click-to-jump and frame-drag viewport control.
+- GPUI Component right-click context menu for session-node creation.
+- Session nodes are backed only by Pi primitives: `NewSession`, `Fork`, and resume via `SwitchSession`.
+- Session nodes render as large, solid draggable chat panels with saved-title headers, Idle/Working status tags, Pi-backed composers, scrollable response streams, markdown assistant output, and inline tool usage cards.
+- Compact bottom segmented dock with a single Settings icon aligned to the right.
 - Settings screen for provider auth flow:
   - provider picker with auth status and auth source labels
   - masked API-key input
@@ -18,6 +24,7 @@ The first native frontend is `crates/pi-desktop`.
   - model selector for authenticated/available models
   - effort selector backed by Pi thinking levels
 - Embedded backend startup from the desktop app without stock Pi RPC.
+- Typed Rust bridge helpers for Pi session lifecycle commands.
 
 ## Runtime paths
 

@@ -28,6 +28,7 @@ impl ApplyEvent for BackendState {
             BridgeEvent::BashChunk { chunk } => self.bash_chunks.push(chunk),
             BridgeEvent::ExtensionUiRequest { request } => self.store_ui_request(request),
             BridgeEvent::ExtensionUiUpdate { update } => self.ui_updates.push(update),
+            BridgeEvent::AuthFlowUpdate { .. } => {}
             BridgeEvent::ComponentRenderRequest { request } => {
                 self.component_lines.entry(request.handle).or_default();
             }

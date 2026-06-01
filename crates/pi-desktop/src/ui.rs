@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-use pi_bridge_types::AuthSource;
+use pi_bridge_types::ProviderAuthStatus;
 
 pub fn logo_path() -> String {
     workspace_root()
@@ -9,29 +10,127 @@ pub fn logo_path() -> String {
         .to_string()
 }
 
-pub fn auth_source_label(source: Option<AuthSource>) -> &'static str {
-    match source {
-        Some(AuthSource::Stored) => "stored in auth.json",
-        Some(AuthSource::Runtime) => "active for this run",
-        Some(AuthSource::Environment) => "environment variable",
-        Some(AuthSource::Fallback) => "fallback resolver",
-        Some(AuthSource::ModelsJsonKey) => "models.json key",
-        Some(AuthSource::ModelsJsonCommand) => "models.json command",
-        None => "not configured",
-    }
+pub fn pin_icon_path() -> String {
+    workspace_root()
+        .join("assets/icons/lucide-pin.svg")
+        .display()
+        .to_string()
 }
 
-pub fn provider_env_hint(provider: &str) -> String {
-    format!(
-        "{} API key or existing Pi auth",
-        provider.to_uppercase().replace('-', "_")
-    )
+pub fn folder_plus_icon_path() -> String {
+    workspace_root()
+        .join("assets/icons/lucide-folder-plus.svg")
+        .display()
+        .to_string()
+}
+
+#[allow(dead_code)]
+pub fn drawing_tool_icon_path(name: &str) -> String {
+    workspace_root()
+        .join("assets/icons")
+        .join(format!("lucide-{name}.svg"))
+        .display()
+        .to_string()
 }
 
 pub fn provider_logo_path(provider: &str) -> Option<String> {
     let file = provider_logo_file(provider)?;
-    let path = workspace_root().join("assets/provider-logos").join(file);
+    let path = provider_logo_dir().join(file);
     path.exists().then(|| path.display().to_string())
+}
+
+fn provider_logo_dir() -> &'static Path {
+    static LOGO_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LOGO_DIR
+        .get_or_init(|| workspace_root().join("assets/provider-logos"))
+        .as_path()
+}
+
+pub const BUILTIN_PROVIDER_SLUGS: &[&str] = &[
+    "amazon-bedrock",
+    "anthropic",
+    "azure-openai-responses",
+    "cerebras",
+    "cloudflare-ai-gateway",
+    "cloudflare-workers-ai",
+    "deepseek",
+    "fireworks",
+    "github-copilot",
+    "google",
+    "google-vertex",
+    "groq",
+    "huggingface",
+    "kimi-coding",
+    "minimax",
+    "minimax-cn",
+    "mistral",
+    "moonshotai",
+    "moonshotai-cn",
+    "openai",
+    "openai-codex",
+    "opencode",
+    "opencode-go",
+    "openrouter",
+    "together",
+    "vercel-ai-gateway",
+    "xai",
+    "xiaomi",
+    "xiaomi-token-plan-ams",
+    "xiaomi-token-plan-cn",
+    "xiaomi-token-plan-sgp",
+    "zai",
+];
+
+pub fn builtin_provider_auth_statuses() -> Vec<ProviderAuthStatus> {
+    BUILTIN_PROVIDER_SLUGS
+        .iter()
+        .map(|provider| ProviderAuthStatus {
+            provider: (*provider).to_owned(),
+            display_name: provider_display_name(provider),
+            configured: false,
+            source: None,
+            label: None,
+        })
+        .collect()
+}
+
+fn provider_display_name(provider: &str) -> String {
+    match provider {
+        "amazon-bedrock" => "Amazon Bedrock",
+        "anthropic" => "Anthropic",
+        "azure-openai-responses" => "Azure OpenAI",
+        "cerebras" => "Cerebras",
+        "cloudflare-ai-gateway" => "Cloudflare AI Gateway",
+        "cloudflare-workers-ai" => "Cloudflare Workers AI",
+        "deepseek" => "DeepSeek",
+        "fireworks" => "Fireworks",
+        "github-copilot" => "GitHub Copilot",
+        "google" => "Google Gemini",
+        "google-vertex" => "Google Vertex AI",
+        "groq" => "Groq",
+        "huggingface" => "Hugging Face",
+        "kimi-coding" => "Kimi Coding",
+        "minimax" => "MiniMax",
+        "minimax-cn" => "MiniMax CN",
+        "mistral" => "Mistral",
+        "moonshotai" => "Moonshot AI",
+        "moonshotai-cn" => "Moonshot AI CN",
+        "openai" => "OpenAI",
+        "openai-codex" => "OpenAI Codex",
+        "opencode" => "OpenCode",
+        "opencode-go" => "OpenCode Go",
+        "openrouter" => "OpenRouter",
+        "together" => "Together AI",
+        "vercel-ai-gateway" => "Vercel AI Gateway",
+        "xai" => "xAI",
+        "xiaomi" => "Xiaomi",
+        "xiaomi-token-plan-ams" => "Xiaomi Token Plan AMS",
+        "xiaomi-token-plan-cn" => "Xiaomi Token Plan CN",
+        "xiaomi-token-plan-sgp" => "Xiaomi Token Plan SGP",
+        "zai" => "Z.ai",
+        _ => provider,
+    }
+    .to_owned()
 }
 
 fn provider_logo_file(provider: &str) -> Option<&'static str> {

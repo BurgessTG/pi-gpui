@@ -4085,10 +4085,13 @@ dependencies = [
  "anyhow",
  "gpui",
  "gpui-component",
+ "lyon",
  "pi-bridge-types",
  "pi-node-host",
  "pi-sdk-bridge",
+ "serde_json",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -4127,6 +4130,7 @@ dependencies = [
  "parking_lot",
  "pi-bridge-types",
  "pi-node-host",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
 ]

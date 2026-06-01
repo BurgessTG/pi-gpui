@@ -23,7 +23,13 @@ pub enum BridgeCommand {
     GetSessionStats,
     GetAuthStatus(GetAuthStatusCommand),
     SetApiKey(SetApiKeyCommand),
+    #[serde(rename = "oauthLogin")]
+    OAuthLogin(OAuthLoginCommand),
     RemoveAuth(RemoveAuthCommand),
+    SearchPackages(SearchPackagesCommand),
+    ListPackages(PackageScopeCommand),
+    InstallPackage(InstallPackageCommand),
+    RemovePackage(RemovePackageCommand),
     NewSession(NewSessionCommand),
     SwitchSession(SwitchSessionCommand),
     Fork(ForkCommand),
@@ -102,8 +108,57 @@ pub struct SetApiKeyCommand {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
+pub struct OAuthLoginCommand {
+    pub provider: String,
+    pub method: Option<OAuthLoginMethod>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum OAuthLoginMethod {
+    Browser,
+    DeviceCode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoveAuthCommand {
     pub provider: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPackagesCommand {
+    pub query: String,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageScopeCommand {
+    pub cwd: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallPackageCommand {
+    pub source: String,
+    pub project: bool,
+    pub cwd: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct RemovePackageCommand {
+    pub source: String,
+    pub project: bool,
+    pub cwd: String,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]

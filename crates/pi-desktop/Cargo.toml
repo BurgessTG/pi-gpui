@@ -9,10 +9,13 @@ version.workspace = true
 anyhow.workspace = true
 gpui = "0.2.2"
 gpui-component = "0.5.1"
+lyon = "1.0"
 pi-bridge-types = { path = "../pi-bridge-types" }
 pi-node-host = { path = "../pi-node-host" }
 pi-sdk-bridge = { path = "../pi-sdk-bridge" }
+serde_json.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 
 [lints]
 workspace = true

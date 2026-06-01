@@ -1,5 +1,4 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
 import type {
 	AuthStorage,
 	ModelRegistry,
@@ -9,16 +8,16 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { FauxProviderRegistration, Model } from "@earendil-works/pi-ai";
 import type {
+	AuthFlowUpdate,
 	BridgeCommand,
 	BridgeResponse,
 	CoreStateSnapshot,
-	ImageAttachment,
 	InitCommand,
-	JsonValue,
 	ModelDescriptor,
 	ModelSelection,
+	OAuthLoginMethod,
+	PackageSearchResponse,
 	ProviderAuthStatus,
-	QueueMode,
 	ThinkingLevel,
 	ToolDescriptor,
 } from "../generated/protocol.js";
@@ -26,6 +25,29 @@ import { BridgeCommandError } from "../bridge/errors.js";
 import { eventEnvelope } from "../bridge/envelope.js";
 import { emitEvent } from "../bridge/native.js";
 import { NativeExtensionUi } from "./extension_ui.js";
+import {
+	installPackageSource,
+	listInstalledPackages,
+	removePackageSource,
+} from "./package_manager.js";
+import {
+	DEFAULT_PACKAGE_LIMIT,
+	searchPackageRegistry,
+} from "./package_registry.js";
+import { RuntimeResourceCache } from "./resource_cache.js";
+import {
+	loadPiAgentRuntime,
+	loadPiAiRuntime,
+	piAgentRoot,
+} from "./runtime_loader.js";
+import {
+	asJson,
+	mapImages,
+	openExternalUrl,
+	queueMode,
+} from "./runtime_helpers.js";
+
+type PiAgentRuntime = typeof import("@earendil-works/pi-coding-agent");
 
 type RuntimeServices = {
 	runtime: AgentSessionRuntime;
@@ -33,75 +55,17 @@ type RuntimeServices = {
 	unsubscribe?: () => void;
 };
 
-function asJson(value: unknown): JsonValue {
-	const serialized = JSON.stringify(value);
-	return serialized === undefined
-		? null
-		: (JSON.parse(serialized) as JsonValue);
-}
-
-function mapImages(
-	images: ImageAttachment[],
-): Array<{ type: "image"; data: string; mimeType: string }> {
-	return images.map((image) => ({
-		type: "image",
-		data: image.dataBase64,
-		mimeType: image.mediaType,
-	}));
-}
-
-function queueMode(mode: QueueMode): "all" | "one-at-a-time" {
-	return mode === "oneAtATime" ? "one-at-a-time" : "all";
-}
-
-type PiAgentRuntime = typeof import("@earendil-works/pi-coding-agent");
-type PiAiRuntime = typeof import("@earendil-works/pi-ai");
-let piAgentRuntimePromise: Promise<PiAgentRuntime> | undefined;
-let piAiRuntimePromise: Promise<PiAiRuntime> | undefined;
-
-async function piAgentRoot(): Promise<string> {
-	const agentEntry = fileURLToPath(
-		import.meta.resolve("@earendil-works/pi-coding-agent"),
-	);
-	return dirname(dirname(agentEntry));
-}
-
-async function loadPiAgentRuntime(): Promise<PiAgentRuntime> {
-	piAgentRuntimePromise ??= (async () => {
-		const root = await piAgentRoot();
-		const moduleUrls = [
-			"config.js",
-			"core/auth-storage.js",
-			"core/model-registry.js",
-			"core/session-manager.js",
-			"core/sdk.js",
-		].map((path) => pathToFileURL(join(root, "dist", path)).href);
-		const modules = await Promise.all(moduleUrls.map((url) => import(url)));
-		return Object.assign({}, ...modules) as PiAgentRuntime;
-	})();
-	return piAgentRuntimePromise;
-}
-
-async function loadPiAiRuntime(): Promise<PiAiRuntime> {
-	piAiRuntimePromise ??= (async () => {
-		const nestedPiAi = pathToFileURL(
-			join(
-				await piAgentRoot(),
-				"node_modules/@earendil-works/pi-ai/dist/index.js",
-			),
-		).href;
-		return import(nestedPiAi) as Promise<PiAiRuntime>;
-	})();
-	return piAiRuntimePromise;
-}
-
 export class PiRuntimeBackend {
 	private services: RuntimeServices | undefined;
 	private authStorage: AuthStorage | undefined;
 	private modelRegistry: ModelRegistry | undefined;
+	private authAgentDir: string | undefined;
+	private authTestMode = false;
 	private faux: FauxProviderRegistration | undefined;
 	private selectedModel: Model<string> | undefined;
 	private enableExtensions = true;
+	private resourceCache: RuntimeResourceCache | undefined;
+	private snapshotTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async dispatch(command: BridgeCommand): Promise<BridgeResponse> {
 		switch (command.type) {
@@ -189,20 +153,70 @@ export class PiRuntimeBackend {
 					},
 				};
 			case "getAuthStatus":
+				await this.ensureAuthServices();
 				return {
 					type: "authStatus",
 					payload: { statuses: this.authStatuses(command.payload.provider) },
 				};
 			case "setApiKey":
+				await this.ensureAuthServices();
 				this.setApiKey(
 					command.payload.provider,
 					command.payload.apiKey,
 					command.payload.persist,
 				);
 				return { type: "ack" };
+			case "oauthLogin":
+				await this.ensureAuthServices();
+				await this.oauthLogin(command.payload.provider, command.payload.method);
+				return { type: "ack" };
 			case "removeAuth":
+				await this.ensureAuthServices();
 				this.removeAuth(command.payload.provider);
 				return { type: "ack" };
+			case "searchPackages":
+				return {
+					type: "json",
+					payload: {
+						value: asJson(
+							await this.searchPackages(
+								command.payload.query,
+								command.payload.limit,
+							),
+						),
+					},
+				};
+			case "listPackages":
+				return {
+					type: "json",
+					payload: {
+						value: asJson(await this.listPackages(command.payload.cwd)),
+					},
+				};
+			case "installPackage":
+				await this.installPackage(
+					command.payload.source,
+					command.payload.project,
+					command.payload.cwd,
+				);
+				return {
+					type: "json",
+					payload: {
+						value: asJson(await this.listPackages(command.payload.cwd)),
+					},
+				};
+			case "removePackage":
+				await this.removePackage(
+					command.payload.source,
+					command.payload.project,
+					command.payload.cwd,
+				);
+				return {
+					type: "json",
+					payload: {
+						value: asJson(await this.listPackages(command.payload.cwd)),
+					},
+				};
 			default:
 				return this.dispatchSessionOrUi(command);
 		}
@@ -486,6 +500,33 @@ export class PiRuntimeBackend {
 		}
 	}
 
+	private async ensureAuthServices(
+		command?: InitCommand,
+	): Promise<PiAgentRuntime> {
+		const piAgent = await loadPiAgentRuntime();
+		const agentDir =
+			command?.agentDir ?? this.authAgentDir ?? piAgent.getAgentDir();
+		const testMode = command?.testMode != null;
+		const shouldRecreate =
+			!this.authStorage ||
+			!this.modelRegistry ||
+			(command != null &&
+				!this.services &&
+				(this.authAgentDir !== agentDir || this.authTestMode !== testMode));
+		if (shouldRecreate) {
+			this.authStorage = command?.testMode
+				? piAgent.AuthStorage.inMemory()
+				: piAgent.AuthStorage.create(join(agentDir, "auth.json"));
+			this.modelRegistry = piAgent.ModelRegistry.inMemory(this.authStorage);
+			this.authAgentDir = agentDir;
+			this.authTestMode = testMode;
+			if (command?.testMode) {
+				this.authStorage.setRuntimeApiKey("faux", "pi-gpui-faux-key");
+			}
+		}
+		return piAgent;
+	}
+
 	private async init(command: InitCommand): Promise<BridgeResponse> {
 		if (this.services) {
 			throw new BridgeCommandError(
@@ -493,31 +534,31 @@ export class PiRuntimeBackend {
 				"Pi runtime is already initialized",
 			);
 		}
-		const piAgent = await loadPiAgentRuntime();
+		const piAgent = await this.ensureAuthServices(command);
 		const cwd = command.cwd;
 		const agentDir = command.agentDir ?? piAgent.getAgentDir();
-		this.authStorage = command.testMode
-			? piAgent.AuthStorage.inMemory()
-			: piAgent.AuthStorage.create(join(agentDir, "auth.json"));
-		this.modelRegistry = piAgent.ModelRegistry.inMemory(this.authStorage);
-		if (command.testMode) {
-			this.authStorage.setRuntimeApiKey("faux", "pi-gpui-faux-key");
-		}
 		if (command.model) {
 			this.selectedModel = this.resolveModel(command.model);
 		}
 		this.enableExtensions = command.enableExtensions;
 		const authStorage = this.authStorage;
 		const modelRegistry = this.modelRegistry;
+		if (!authStorage || !modelRegistry) {
+			throw new BridgeCommandError(
+				"notInitialized",
+				"Pi auth services failed to initialize",
+			);
+		}
 		const initialSelectedModel = this.selectedModel;
 		const initialTools = command.tools ?? undefined;
 		const testMode = command.testMode ?? undefined;
 		const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-			const services = await piAgent.createAgentSessionServices({
+			const services = await this.resources().createServices({
 				cwd: options.cwd,
 				agentDir: options.agentDir,
 				authStorage,
 				modelRegistry,
+				enableExtensions: this.enableExtensions,
 			});
 			let runtimeModel = initialSelectedModel;
 			if (testMode) {
@@ -592,7 +633,7 @@ export class PiRuntimeBackend {
 					}),
 				);
 			}
-			this.emitSnapshot();
+			this.scheduleSnapshot();
 		});
 		if (this.enableExtensions) {
 			await current.runtime.session.bindExtensions({
@@ -636,6 +677,11 @@ export class PiRuntimeBackend {
 			);
 		}
 		return this.services;
+	}
+
+	private resources(): RuntimeResourceCache {
+		this.resourceCache ??= new RuntimeResourceCache(piAgentRoot);
+		return this.resourceCache;
 	}
 
 	private resolveModel(selection: ModelSelection): Model<string> {
@@ -698,6 +744,145 @@ export class PiRuntimeBackend {
 		}
 	}
 
+	private async searchPackages(
+		query: string,
+		limit = DEFAULT_PACKAGE_LIMIT,
+	): Promise<PackageSearchResponse> {
+		return searchPackageRegistry(query, limit);
+	}
+
+	private async listPackages(cwd: string) {
+		return listInstalledPackages(this.packageManagerOptions(cwd));
+	}
+
+	private async installPackage(
+		source: string,
+		project: boolean,
+		cwd: string,
+	): Promise<void> {
+		await installPackageSource(
+			source,
+			project,
+			this.packageManagerOptions(cwd),
+		);
+		this.resourceCache?.clear();
+	}
+
+	private async removePackage(
+		source: string,
+		project: boolean,
+		cwd: string,
+	): Promise<void> {
+		await removePackageSource(source, project, this.packageManagerOptions(cwd));
+		this.resourceCache?.clear();
+	}
+
+	private packageManagerOptions(cwd: string) {
+		return {
+			cwd,
+			authAgentDir: this.authAgentDir,
+			loadPiAgentRuntime,
+		};
+	}
+
+	private async oauthLogin(
+		provider: string,
+		method: OAuthLoginMethod | null,
+	): Promise<void> {
+		const authStorage = this.authStorage;
+		if (!authStorage) {
+			throw new BridgeCommandError(
+				"notInitialized",
+				"Pi auth storage is not initialized",
+			);
+		}
+		const oauthProvider = authStorage
+			.getOAuthProviders()
+			.find((candidate) => candidate.id === provider);
+		if (!oauthProvider) {
+			throw new BridgeCommandError(
+				"invalidPayload",
+				`Provider ${provider} does not support OAuth login`,
+			);
+		}
+		this.emitAuthFlowUpdate({
+			provider,
+			message: `Starting ${oauthProvider.name} authentication…`,
+			url: null,
+			userCode: null,
+		});
+		await authStorage.login(provider, {
+			onAuth: (info) => {
+				this.emitAuthFlowUpdate({
+					provider,
+					message:
+						info.instructions ??
+						"Complete authentication in the browser window.",
+					url: info.url,
+					userCode: null,
+				});
+				openExternalUrl(info.url);
+			},
+			onDeviceCode: (info) => {
+				this.emitAuthFlowUpdate({
+					provider,
+					message: "Enter the device code in the opened browser window.",
+					url: info.verificationUri,
+					userCode: info.userCode,
+				});
+				openExternalUrl(info.verificationUri);
+			},
+			onPrompt: async (prompt) => {
+				this.emitAuthFlowUpdate({
+					provider,
+					message: prompt.message,
+					url: null,
+					userCode: null,
+				});
+				if (prompt.allowEmpty) return "";
+				throw new Error(
+					`${prompt.message} Manual entry is not available in the desktop auth drawer yet.`,
+				);
+			},
+			onProgress: (message) => {
+				this.emitAuthFlowUpdate({
+					provider,
+					message,
+					url: null,
+					userCode: null,
+				});
+			},
+			onSelect: async (prompt) => {
+				const desired =
+					method === "deviceCode"
+						? "device_code"
+						: method === "browser"
+							? "browser"
+							: undefined;
+				return (
+					prompt.options.find((option) => option.id === desired)?.id ??
+					prompt.options[0]?.id
+				);
+			},
+		});
+		this.refreshModelsAfterAuthChange();
+		this.emitAuthFlowUpdate({
+			provider,
+			message: `${oauthProvider.name} authentication complete.`,
+			url: null,
+			userCode: null,
+		});
+	}
+
+	private emitAuthFlowUpdate(update: AuthFlowUpdate): void {
+		emitEvent(
+			eventEnvelope({
+				type: "authFlowUpdate",
+				payload: { update },
+			}),
+		);
+	}
+
 	private setApiKey(provider: string, apiKey: string, persist: boolean): void {
 		if (persist) {
 			this.authStorage?.set(provider, { type: "api_key", key: apiKey });
@@ -747,6 +932,14 @@ export class PiRuntimeBackend {
 		}));
 	}
 
+	private scheduleSnapshot(): void {
+		if (this.snapshotTimer) return;
+		this.snapshotTimer = setTimeout(() => {
+			this.snapshotTimer = undefined;
+			this.emitSnapshot();
+		}, 8);
+	}
+
 	private emitSnapshot(): void {
 		emitEvent(
 			eventEnvelope({
@@ -777,6 +970,10 @@ export class PiRuntimeBackend {
 	}
 
 	private async dispose(): Promise<void> {
+		if (this.snapshotTimer) {
+			clearTimeout(this.snapshotTimer);
+			this.snapshotTimer = undefined;
+		}
 		this.services?.unsubscribe?.();
 		this.services?.ui.dispose();
 		await this.services?.runtime.dispose();

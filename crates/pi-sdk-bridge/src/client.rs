@@ -1,7 +1,10 @@
 use pi_bridge_types::{
-    BridgeCommand, BridgeResponse, CoreStateSnapshot, GetAuthStatusCommand, InitCommand,
-    MessageCommand, ModelDescriptor, PromptCommand, ProviderAuthStatus, RemoveAuthCommand,
-    SetApiKeyCommand,
+    BridgeCommand, BridgeResponse, CoreStateSnapshot, ForkCommand, ForkPosition,
+    GetAuthStatusCommand, InitCommand, InstallPackageCommand, InstalledPackage, MessageCommand,
+    ModelDescriptor, NewSessionCommand, OAuthLoginCommand, OAuthLoginMethod, PackageScopeCommand,
+    PackageSearchResponse, PromptCommand, ProviderAuthStatus, RemoveAuthCommand,
+    RemovePackageCommand, SearchPackagesCommand, SetApiKeyCommand, SetSessionNameCommand,
+    SwitchSessionCommand,
 };
 
 use crate::{BridgeClientError, BridgeTransport, Result};
@@ -90,9 +93,148 @@ where
         self.set_api_key(provider, api_key, true).await
     }
 
+    pub async fn oauth_login(
+        &self,
+        provider: impl Into<String>,
+        method: Option<OAuthLoginMethod>,
+    ) -> Result<()> {
+        self.expect_ack(BridgeCommand::OAuthLogin(OAuthLoginCommand {
+            provider: provider.into(),
+            method,
+        }))
+        .await
+    }
+
     pub async fn remove_auth(&self, provider: impl Into<String>) -> Result<()> {
         self.expect_ack(BridgeCommand::RemoveAuth(RemoveAuthCommand {
             provider: provider.into(),
+        }))
+        .await
+    }
+
+    pub async fn search_packages(
+        &self,
+        query: impl Into<String>,
+        limit: u32,
+    ) -> Result<PackageSearchResponse> {
+        match self
+            .transport
+            .request(BridgeCommand::SearchPackages(SearchPackagesCommand {
+                query: query.into(),
+                limit,
+            }))
+            .await?
+        {
+            BridgeResponse::Json { value } => Ok(serde_json::from_value(value)?),
+            _other => Err(BridgeClientError::UnexpectedResponse("package search")),
+        }
+    }
+
+    pub async fn list_packages(&self, cwd: impl Into<String>) -> Result<Vec<InstalledPackage>> {
+        match self
+            .transport
+            .request(BridgeCommand::ListPackages(PackageScopeCommand {
+                cwd: cwd.into(),
+            }))
+            .await?
+        {
+            BridgeResponse::Json { value } => Ok(serde_json::from_value(value)?),
+            _other => Err(BridgeClientError::UnexpectedResponse("installed packages")),
+        }
+    }
+
+    pub async fn install_package(
+        &self,
+        source: impl Into<String>,
+        project: bool,
+        cwd: impl Into<String>,
+    ) -> Result<Vec<InstalledPackage>> {
+        match self
+            .transport
+            .request(BridgeCommand::InstallPackage(InstallPackageCommand {
+                source: source.into(),
+                project,
+                cwd: cwd.into(),
+            }))
+            .await?
+        {
+            BridgeResponse::Json { value } => Ok(serde_json::from_value(value)?),
+            _other => Err(BridgeClientError::UnexpectedResponse("installed packages")),
+        }
+    }
+
+    pub async fn remove_package(
+        &self,
+        source: impl Into<String>,
+        project: bool,
+        cwd: impl Into<String>,
+    ) -> Result<Vec<InstalledPackage>> {
+        match self
+            .transport
+            .request(BridgeCommand::RemovePackage(RemovePackageCommand {
+                source: source.into(),
+                project,
+                cwd: cwd.into(),
+            }))
+            .await?
+        {
+            BridgeResponse::Json { value } => Ok(serde_json::from_value(value)?),
+            _other => Err(BridgeClientError::UnexpectedResponse("installed packages")),
+        }
+    }
+
+    pub async fn new_session(&self, parent_session: Option<String>) -> Result<bool> {
+        match self
+            .transport
+            .request(BridgeCommand::NewSession(NewSessionCommand {
+                parent_session,
+            }))
+            .await?
+        {
+            BridgeResponse::Cancelled { cancelled } => Ok(cancelled),
+            _other => Err(BridgeClientError::UnexpectedResponse("cancelled")),
+        }
+    }
+
+    pub async fn switch_session(
+        &self,
+        session_path: impl Into<String>,
+        cwd_override: Option<String>,
+    ) -> Result<bool> {
+        match self
+            .transport
+            .request(BridgeCommand::SwitchSession(SwitchSessionCommand {
+                session_path: session_path.into(),
+                cwd_override,
+            }))
+            .await?
+        {
+            BridgeResponse::Cancelled { cancelled } => Ok(cancelled),
+            _other => Err(BridgeClientError::UnexpectedResponse("cancelled")),
+        }
+    }
+
+    pub async fn fork_session(
+        &self,
+        entry_id: impl Into<String>,
+        position: ForkPosition,
+    ) -> Result<()> {
+        match self
+            .transport
+            .request(BridgeCommand::Fork(ForkCommand {
+                entry_id: entry_id.into(),
+                position,
+            }))
+            .await?
+        {
+            BridgeResponse::Json { .. } => Ok(()),
+            _other => Err(BridgeClientError::UnexpectedResponse("json")),
+        }
+    }
+
+    pub async fn set_session_name(&self, name: impl Into<String>) -> Result<()> {
+        self.expect_ack(BridgeCommand::SetSessionName(SetSessionNameCommand {
+            name: name.into(),
         }))
         .await
     }

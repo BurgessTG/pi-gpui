@@ -1,5 +1,4 @@
 use gpui::{App, ElementId, SharedString, px};
-use gpui_component::IconName;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 
 use crate::design::theme;
@@ -19,15 +18,6 @@ pub fn pi_button(
     cx: &App,
 ) -> Button {
     base_button(id, kind, cx).label(label)
-}
-
-pub fn pi_icon_button(
-    id: impl Into<ElementId>,
-    icon: IconName,
-    kind: PiButtonKind,
-    cx: &App,
-) -> Button {
-    base_button(id, kind, cx).icon(icon).compact()
 }
 
 fn base_button(id: impl Into<ElementId>, kind: PiButtonKind, cx: &App) -> Button {

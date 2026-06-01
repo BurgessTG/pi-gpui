@@ -8,4 +8,6 @@ pub enum BridgeClientError {
     UnexpectedResponse(&'static str),
     #[error("transport error: {0}")]
     Transport(String),
+    #[error("invalid JSON response: {0}")]
+    Json(#[from] serde_json::Error),
 }

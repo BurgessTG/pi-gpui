@@ -1,35 +1,139 @@
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, div, font, px, svg,
+    Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context, Entity,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, MouseDownEvent,
+    ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Timer, Window, canvas, div, fill, point, px, size, svg,
 };
-use gpui_component::group_box::GroupBoxVariant;
+use gpui_component::animation::cubic_bezier;
 use gpui_component::input::{InputEvent, InputState};
+use gpui_component::resizable::{ResizableState, h_resizable, resizable_panel};
 use gpui_component::setting::{SettingGroup, SettingItem, SettingPage, Settings};
-use gpui_component::{IconName, Sizable as _, Size, StyledExt as _};
-use pi_bridge_types::ProviderAuthStatus;
+use gpui_component::slider::{SliderEvent, SliderState, SliderValue};
+use gpui_component::table::TableState;
+use gpui_component::tree::TreeState;
+use gpui_component::{Sizable as _, Size};
+use pi_bridge_types::{
+    AuthFlowUpdate, BridgeEvent, BridgeEventEnvelope, CoreStateSnapshot, OAuthLoginMethod,
+    PackageSearchResult, ProviderAuthStatus,
+};
 
 use crate::backend::{BackendData, BackendSession, BackendSnapshot};
-use crate::components::button::{PiButtonKind, pi_button, pi_icon_button};
-use crate::components::input::pi_input;
-use crate::components::surface;
+use crate::chat::transcript::ChatTranscript;
+use crate::components::auth_settings::{
+    AuthSettingsState, auth_settings_content, settings_placeholder,
+};
+use crate::components::package_settings::InstalledPackagesTableDelegate;
+use crate::components::{
+    bottom_dock, chat_node, file_picker, pinned_panels, workspace_canvas, workspace_launcher,
+    workspace_tabs,
+};
 use crate::design::theme;
 use crate::ui;
+use crate::workspace::canvas::{
+    CanvasDrawing, CanvasDrawingTool, SessionNodeMetadata, SessionNodePrimitive, WorldPoint,
+    WorldSize,
+};
+use crate::workspace::picker::{self, DEFAULT_DIRECTORY_DEPTH};
+use crate::workspace::state::WorkspaceState;
+
+mod appearance_actions;
+mod backend_flow;
+mod canvas_actions;
+mod chat_actions;
+mod package_actions;
+mod pinned_actions;
+mod render;
+mod workspace_actions;
+
+pub(crate) fn init(cx: &mut App) {
+    pinned_actions::init(cx);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthFlow {
+    Choose,
+    ApiKey,
+}
+
+const DRAWER_ANIMATION_DURATION: Duration = Duration::from_millis(220);
+const DRAWER_WIDTH: f32 = 520.0;
+const PROVIDER_HOVER_DELAY: Duration = Duration::from_secs(1);
+const STATUS_BAR_HEIGHT: f32 = 28.0;
+const BOTTOM_DOCK_HEIGHT: f32 = 28.0;
+const MINIMAP_WIDTH: f32 = 148.0;
+const MINIMAP_HEIGHT: f32 = 108.0;
+const NEW_FOLDER_ROW_ANIMATION: Duration = Duration::from_millis(180);
+const FRAME_RENDER_INTERVAL: Duration = Duration::from_millis(8);
+
+fn drawer_animation() -> Animation {
+    Animation::new(DRAWER_ANIMATION_DURATION).with_easing(cubic_bezier(0.32, 0.72, 0.0, 1.0))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WorkspaceDialog {
+    OpenWorkspace,
+}
 
 pub struct PiDesktop {
+    focus_handle: FocusHandle,
     settings_drawer_open: bool,
+    settings_drawer_visible: bool,
     backend: Option<Arc<BackendSession>>,
     data: Option<BackendData>,
     selected_provider: Option<String>,
+    hovered_provider: Option<String>,
+    hover_card_provider: Option<String>,
+    auth_flow: AuthFlow,
+    appearance: theme::AppearanceSettings,
     api_key_input: Entity<InputState>,
-    prompt_input: Entity<InputState>,
+    package_search_input: Entity<InputState>,
+    package_results: Vec<PackageSearchResult>,
+    package_pending: bool,
+    installing_package: Option<String>,
+    removing_package: Option<String>,
+    new_installed_package: Option<String>,
+    installed_packages_table: Entity<TableState<InstalledPackagesTableDelegate>>,
+    workspace_name_input: Entity<InputState>,
+    new_folder_name_input: Entity<InputState>,
+    workspace_tree: Entity<TreeState>,
+    workspace_state: WorkspaceState,
+    snap_to_grid: bool,
+    drawing_tools_visible: bool,
+    active_drawing_tool: CanvasDrawingTool,
+    drawing_stroke_width: f32,
+    drawing_stroke_slider: Entity<SliderState>,
+    pin_shell_state: Entity<ResizableState>,
+    pin_panel_state: Entity<ResizableState>,
+    chat_inputs: HashMap<(usize, usize), Entity<InputState>>,
+    chat_input_subscriptions: HashMap<(usize, usize), Subscription>,
+    title_inputs: HashMap<(usize, usize), Entity<InputState>>,
+    title_input_subscriptions: HashMap<(usize, usize), Subscription>,
+    text_box_inputs: HashMap<(usize, usize), Entity<InputState>>,
+    text_box_input_subscriptions: HashMap<(usize, usize), Subscription>,
+    chat_transcripts: HashMap<(usize, usize), Entity<ChatTranscript>>,
+    chat_body_views: HashMap<(usize, usize), Entity<chat_node::ChatBodyView>>,
+    streaming_node: Option<(usize, usize)>,
+    editing_title: Option<(usize, usize)>,
+    editing_text_box: Option<(usize, usize)>,
+    previous_workspace_index: Option<usize>,
+    showing_landing: bool,
+    workspace_dialog: Option<WorkspaceDialog>,
+    new_folder_input_visible: bool,
+    showing_new_folder_input: bool,
+    pending_delete_folder: Option<PathBuf>,
+    showing_delete_folder_confirmation: bool,
+    workspace_picker_root: PathBuf,
     status: SharedString,
     pending: bool,
+    event_render_scheduled: bool,
+    canvas_render_scheduled: bool,
     cwd: PathBuf,
     _subscriptions: Vec<Subscription>,
 }
@@ -41,698 +145,518 @@ impl PiDesktop {
                 .placeholder("Paste API key")
                 .masked(true)
         });
-        let prompt_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Ask Pi anything")
-                .auto_grow(1, 4)
-        });
-        let prompt_subscription =
-            cx.subscribe_in(&prompt_input, window, |view, input, event, window, cx| {
+        let package_search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search Pi packages"));
+        let package_search_subscription = cx.subscribe_in(
+            &package_search_input,
+            window,
+            |view, _input, event, _window, cx| {
                 if matches!(event, InputEvent::PressEnter { secondary: false }) {
-                    let text = input.read(cx).value().to_string();
-                    if !text.trim().is_empty() {
-                        input.update(cx, |input, cx| input.set_value("", window, cx));
-                        view.send_prompt_text(text, cx);
-                    }
+                    view.search_packages(cx);
                 }
-            });
+            },
+        );
+        let package_view = cx.entity().clone();
+        let installed_packages_table = cx.new(|cx| {
+            TableState::new(
+                InstalledPackagesTableDelegate::new(package_view.clone()),
+                window,
+                cx,
+            )
+        });
+        let workspace_name_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Workspace name"));
+        let workspace_name_subscription = cx.subscribe_in(
+            &workspace_name_input,
+            window,
+            |view, input, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { secondary: false })
+                    && !input.read(cx).value().trim().is_empty()
+                {
+                    view.create_workspace_from_name(window, cx);
+                }
+            },
+        );
+        let new_folder_name_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Folder name"));
+        let new_folder_name_subscription = cx.subscribe_in(
+            &new_folder_name_input,
+            window,
+            |view, input, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { secondary: false })
+                    && !input.read(cx).value().trim().is_empty()
+                {
+                    view.create_folder_in_selected_workspace_path(window, cx);
+                }
+            },
+        );
+        let drawing_stroke_slider = cx.new(|_cx| {
+            SliderState::new()
+                .min(1.0)
+                .max(16.0)
+                .step(1.0)
+                .default_value(5.0)
+        });
+        let pin_shell_state = cx.new(|_| ResizableState::default());
+        let pin_panel_state = cx.new(|_| ResizableState::default());
+        let drawing_stroke_subscription = cx.subscribe_in(
+            &drawing_stroke_slider,
+            window,
+            |view, _slider, event, _window, cx| {
+                let SliderEvent::Change(SliderValue::Single(value)) = event else {
+                    return;
+                };
+                view.set_drawing_stroke_width(*value, cx);
+            },
+        );
         let cwd = std::env::current_dir().unwrap_or_else(|_error| PathBuf::from("."));
+        let workspace_picker_root = cwd.clone();
+        let workspace_tree = cx.new(|cx| {
+            TreeState::new(cx).items(picker::build_directory_tree(
+                &workspace_picker_root,
+                DEFAULT_DIRECTORY_DEPTH,
+            ))
+        });
         let mut this = Self {
+            focus_handle: cx.focus_handle(),
             settings_drawer_open: false,
+            settings_drawer_visible: false,
             backend: None,
             data: None,
             selected_provider: None,
+            hovered_provider: None,
+            hover_card_provider: None,
+            auth_flow: AuthFlow::Choose,
+            appearance: theme::current_appearance(),
             api_key_input,
-            prompt_input,
+            package_search_input,
+            package_results: Vec::new(),
+            package_pending: false,
+            installing_package: None,
+            removing_package: None,
+            new_installed_package: None,
+            installed_packages_table,
+            workspace_name_input,
+            new_folder_name_input,
+            workspace_tree,
+            workspace_state: WorkspaceState::new(),
+            snap_to_grid: true,
+            drawing_tools_visible: false,
+            active_drawing_tool: CanvasDrawingTool::Select,
+            drawing_stroke_width: 5.0,
+            drawing_stroke_slider,
+            pin_shell_state,
+            pin_panel_state,
+            chat_inputs: HashMap::new(),
+            chat_input_subscriptions: HashMap::new(),
+            title_inputs: HashMap::new(),
+            title_input_subscriptions: HashMap::new(),
+            text_box_inputs: HashMap::new(),
+            text_box_input_subscriptions: HashMap::new(),
+            chat_transcripts: HashMap::new(),
+            chat_body_views: HashMap::new(),
+            streaming_node: None,
+            editing_title: None,
+            editing_text_box: None,
+            previous_workspace_index: None,
+            showing_landing: true,
+            workspace_dialog: None,
+            new_folder_input_visible: false,
+            showing_new_folder_input: false,
+            pending_delete_folder: None,
+            showing_delete_folder_confirmation: false,
+            workspace_picker_root,
             status: "Starting embedded Pi backend…".into(),
             pending: true,
+            event_render_scheduled: false,
+            canvas_render_scheduled: false,
             cwd,
-            _subscriptions: vec![prompt_subscription],
+            _subscriptions: vec![
+                package_search_subscription,
+                workspace_name_subscription,
+                new_folder_name_subscription,
+                drawing_stroke_subscription,
+            ],
         };
         this.start_backend(cx);
         this
     }
 
-    fn start_backend(&mut self, cx: &mut Context<Self>) {
-        if self.backend.is_some() {
-            self.run_backend(
-                "Refreshing embedded Pi backend…",
-                |backend| backend.refresh(),
-                cx,
-            );
-            return;
-        }
-        self.pending = true;
-        self.status = "Starting embedded Pi backend…".into();
-        cx.notify();
-        let cwd = self.cwd.clone();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move { BackendSession::connect(cwd) })
-                .await;
-            let _ = this.update(cx, |view, cx| {
-                view.pending = false;
-                match result {
-                    Ok(snapshot) => view.apply_snapshot(snapshot),
-                    Err(error) => {
-                        view.backend = None;
-                        view.data = None;
-                        view.status = format!("Backend unavailable: {error:#}").into();
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+    fn workspace_index_for_id(&self, workspace_id: usize) -> Option<usize> {
+        self.workspace_state.index_for_id(workspace_id)
     }
 
-    fn apply_snapshot(&mut self, snapshot: BackendSnapshot) {
-        self.backend = Some(snapshot.session);
-        self.apply_data(snapshot.data, "Embedded Pi backend ready.");
+    fn workspace_id_for_index(&self, workspace_index: usize) -> Option<usize> {
+        self.workspace_state.tab_id(workspace_index)
     }
 
-    fn apply_data(&mut self, data: BackendData, status: impl Into<SharedString>) {
-        self.data = Some(data);
-        self.status = status.into();
-    }
-
-    fn run_backend(
+    fn ensure_chat_transcript(
         &mut self,
-        pending_status: impl Into<SharedString>,
-        operation: impl FnOnce(Arc<BackendSession>) -> Result<BackendData> + Send + 'static,
+        key: (usize, usize),
+        cx: &mut Context<Self>,
+    ) -> Entity<ChatTranscript> {
+        self.chat_transcripts
+            .entry(key)
+            .or_insert_with(|| cx.new(|_| ChatTranscript::default()))
+            .clone()
+    }
+
+    fn update_chat_transcript(
+        &mut self,
+        key: (usize, usize),
+        cx: &mut Context<Self>,
+        update: impl FnOnce(&mut ChatTranscript),
+    ) -> bool {
+        let transcript = self.ensure_chat_transcript(key, cx);
+        transcript.update(cx, |transcript, cx| {
+            let before = transcript.revision();
+            update(transcript);
+            let changed = transcript.revision() != before;
+            if changed {
+                cx.notify();
+            }
+            changed
+        })
+    }
+
+    fn hydrate_chat_transcripts_from_state(
+        &mut self,
+        metadata: &SessionNodeMetadata,
+        messages: &[serde_json::Value],
         cx: &mut Context<Self>,
     ) {
-        let Some(session) = self.backend.clone() else {
-            self.status = "Backend is not ready yet.".into();
-            cx.notify();
-            return;
-        };
-        self.pending = true;
-        self.status = pending_status.into();
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async move { operation(session) }).await;
-            let _ = this.update(cx, |view, cx| {
-                view.pending = false;
-                match result {
-                    Ok(data) => view.apply_data(data, "Settings synchronized."),
-                    Err(error) => view.status = format!("Backend error: {error:#}").into(),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    fn open_landing(&mut self, cx: &mut Context<Self>) {
-        self.settings_drawer_open = false;
-        cx.notify();
-    }
-
-    fn toggle_settings_drawer(&mut self, cx: &mut Context<Self>) {
-        self.settings_drawer_open = !self.settings_drawer_open;
-        cx.notify();
-    }
-
-    fn select_provider(&mut self, provider: String, cx: &mut Context<Self>) {
-        self.selected_provider = Some(provider);
-        cx.notify();
-    }
-
-    fn save_api_key(&mut self, persist: bool, cx: &mut Context<Self>) {
-        let Some(provider) = self.selected_provider.clone() else {
-            self.status = "Pick a provider first.".into();
-            cx.notify();
-            return;
-        };
-        let api_key = self.api_key_input.read(cx).value().to_string();
-        if api_key.trim().is_empty() {
-            self.status = "Paste an API key before saving.".into();
-            cx.notify();
+        if messages.is_empty() {
             return;
         }
-        let label = if persist {
-            "Saving API key to Pi auth storage…"
-        } else {
-            "Activating API key for this run…"
-        };
-        self.run_backend(
-            label,
-            move |backend| backend.save_api_key(provider, api_key, persist),
-            cx,
-        );
-    }
-
-    fn remove_selected_auth(&mut self, cx: &mut Context<Self>) {
-        let Some(provider) = self.selected_provider.clone() else {
-            self.status = "Pick a provider first.".into();
-            cx.notify();
-            return;
-        };
-        self.run_backend(
-            "Removing provider auth…",
-            move |backend| backend.remove_auth(provider),
-            cx,
-        );
-    }
-
-    fn send_prompt_text(&mut self, text: String, cx: &mut Context<Self>) {
-        self.run_backend(
-            "Sending prompt through the embedded Pi SDK…",
-            move |backend| backend.prompt(text),
-            cx,
-        );
-    }
-
-    fn providers(&self) -> Vec<ProviderAuthStatus> {
-        self.data
-            .as_ref()
-            .map(|data| data.auth.clone())
-            .unwrap_or_default()
-    }
-}
-
-impl Render for PiDesktop {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(theme::app_bg())
-            .text_color(theme::text())
-            .child(self.render_status_bar(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .relative()
-                    .overflow_hidden()
-                    .child(self.render_background_grid())
-                    .child(self.render_landing())
-                    .when(self.settings_drawer_open, |this| {
-                        this.child(self.render_settings_drawer(cx))
-                    }),
-            )
-            .child(self.render_chat_bar(cx))
-    }
-}
-
-impl PiDesktop {
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .h(px(28.0))
-            .px_2()
-            .child(
-                div()
-                    .id("home-logo")
-                    .p_1()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(theme::surface_hover()))
-                    .on_click(cx.listener(|view, _, _, cx| view.open_landing(cx)))
-                    .child(
-                        svg()
-                            .path(ui::logo_path())
-                            .size_4()
-                            .text_color(theme::text()),
-                    ),
-            )
-            .child(
-                pi_icon_button("settings", IconName::Settings, PiButtonKind::Ghost, cx)
-                    .on_click(cx.listener(|view, _, _, cx| view.toggle_settings_drawer(cx))),
-            )
-    }
-
-    fn render_landing(&self) -> impl IntoElement {
-        div()
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .px_8()
-            .child(
-                div()
-                    .mb(px(74.0))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap_5()
-                    .max_w(px(760.0))
-                    .child(
-                        svg()
-                            .path(ui::logo_path())
-                            .size(px(104.0))
-                            .text_color(theme::text()),
-                    )
-                    .child(hero_title()),
-            )
-    }
-
-    fn render_background_grid(&self) -> impl IntoElement {
-        let vertical = (0..96).map(|index| {
-            let major = index % 4 == 0;
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left(px(index as f32 * 16.0))
-                .w(px(1.0))
-                .bg(if major {
-                    theme::grid_major()
-                } else {
-                    theme::grid_minor()
-                })
-                .into_any_element()
-        });
-        let horizontal = (0..72).map(|index| {
-            let major = index % 4 == 0;
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .top(px(index as f32 * 16.0))
-                .h(px(1.0))
-                .bg(if major {
-                    theme::grid_major()
-                } else {
-                    theme::grid_minor()
-                })
-                .into_any_element()
-        });
-
-        div()
-            .absolute()
-            .top_0()
-            .right_0()
-            .bottom_0()
-            .left_0()
-            .children(vertical.chain(horizontal))
-    }
-
-    fn render_settings_drawer(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .absolute()
-            .top_0()
-            .right_0()
-            .bottom_0()
-            .w(px(520.0))
-            .occlude()
-            .border_l_1()
-            .border_color(theme::hairline())
-            .bg(theme::surface())
-            .child(self.render_settings_component(cx))
-    }
-
-    fn render_settings_component(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let providers = self.providers();
-        let selected_provider = self.selected_provider.clone();
-        let api_key_input = self.api_key_input.clone();
-        let status = self.status.clone();
-        let pending = self.pending;
-        let view = cx.entity().clone();
-
-        Settings::new("pi-settings")
-            .sidebar_width(px(148.0))
-            .search_visible(false)
-            .with_size(Size::Small)
-            .with_group_variant(GroupBoxVariant::Outline)
-            .pages(vec![
-                SettingPage::new("Auth")
-                    .default_open(true)
-                    .resettable(false)
-                    .group(SettingGroup::new().title("Providers").item(SettingItem::render(
-                        move |_, _, cx| {
-                            auth_settings_content(
-                                providers.clone(),
-                                selected_provider.clone(),
-                                api_key_input.clone(),
-                                status.clone(),
-                                pending,
-                                view.clone(),
-                                cx,
-                            )
-                        },
-                    ))),
-                SettingPage::new("Theme")
-                    .resettable(false)
-                    .group(SettingGroup::new().title("Theme").item(SettingItem::render(
-                        |_, _, _| {
-                            settings_placeholder(
-                                "Pi.dev dark, grid controls, accent, and font settings will live here.",
-                            )
-                        },
-                    ))),
-                SettingPage::new("Advanced")
-                    .resettable(false)
-                    .group(SettingGroup::new().title("Advanced").item(SettingItem::render(
-                        |_, _, _| {
-                            settings_placeholder(
-                                "Runtime, workspace, SDK, and debugging controls will live here.",
-                            )
-                        },
-                    ))),
-            ])
-    }
-
-    fn render_chat_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .border_t_1()
-            .border_color(theme::hairline())
-            .bg(theme::surface())
-            .p_3()
-            .flex()
-            .gap_3()
-            .items_end()
-            .child(
-                div()
-                    .flex_1()
-                    .child(pi_input(&self.prompt_input).h(px(44.0))),
-            )
-            .child(
-                pi_button("send-prompt", "Send", PiButtonKind::Primary, cx)
-                    .loading(self.pending)
-                    .on_click(cx.listener(|view, _, window, cx| {
-                        let text = view.prompt_input.read(cx).value().to_string();
-                        if text.trim().is_empty() {
-                            view.status = "Type a prompt first.".into();
-                            cx.notify();
-                        } else {
-                            view.prompt_input
-                                .update(cx, |input, cx| input.set_value("", window, cx));
-                            view.send_prompt_text(text, cx);
-                        }
-                    })),
-            )
-    }
-}
-
-fn auth_settings_content(
-    providers: Vec<ProviderAuthStatus>,
-    selected_provider: Option<String>,
-    api_key_input: Entity<InputState>,
-    status_text: SharedString,
-    pending: bool,
-    view: Entity<PiDesktop>,
-    cx: &mut gpui::App,
-) -> AnyElement {
-    let selected_status = selected_provider.as_ref().and_then(|provider| {
-        providers
+        let keys = self
+            .workspace_state
+            .tabs()
             .iter()
-            .find(|status| status.provider == *provider)
-            .cloned()
-    });
-    let provider_icons = providers
-        .into_iter()
-        .map(|status| {
-            provider_icon_cell(status, selected_provider.as_deref(), view.clone())
-                .into_any_element()
-        })
-        .collect::<Vec<_>>();
+            .flat_map(|tab| {
+                tab.canvas()
+                    .nodes()
+                    .iter()
+                    .filter(|node| session_metadata_matches(node.metadata(), metadata))
+                    .map(|node| (tab.id(), node.id()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        for key in keys {
+            self.update_chat_transcript(key, cx, |transcript| {
+                transcript.replace_from_snapshot_messages(messages);
+            });
+        }
+    }
 
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .id("provider-icon-scroll")
-                .h(px(124.0))
-                .overflow_y_scroll()
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                .p_2()
-                .flex()
-                .flex_wrap()
-                .justify_center()
-                .gap_2()
-                .children(provider_icons),
-        )
-        .when_some(selected_status, |this, status| {
-            this.child(provider_auth_flow(
-                status,
-                api_key_input,
-                status_text,
-                pending,
-                view,
-                cx,
-            ))
-        })
-        .into_any_element()
-}
+    fn remove_session_node_ui_state(&mut self, workspace_id: usize, node_id: usize) {
+        let key = (workspace_id, node_id);
+        self.chat_inputs.remove(&key);
+        self.chat_input_subscriptions.remove(&key);
+        self.title_inputs.remove(&key);
+        self.title_input_subscriptions.remove(&key);
+        self.chat_transcripts.remove(&key);
+        self.chat_body_views.remove(&key);
+        if self.streaming_node == Some(key) {
+            self.streaming_node = None;
+        }
+        if self.editing_title == Some(key) {
+            self.editing_title = None;
+        }
+    }
 
-fn provider_icon_cell(
-    status: ProviderAuthStatus,
-    selected_provider: Option<&str>,
-    view: Entity<PiDesktop>,
-) -> impl IntoElement {
-    let selected = selected_provider == Some(status.provider.as_str());
-    let provider = status.provider.clone();
-    div()
-        .id(SharedString::from(format!("provider-{}", status.provider)))
-        .size(px(42.0))
-        .border_1()
-        .border_color(if selected {
-            theme::accent()
-        } else {
-            theme::hairline()
-        })
-        .bg(if selected {
-            theme::surface_selected()
-        } else {
-            gpui::transparent_black()
-        })
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .hover(|style| style.bg(theme::surface_selected()))
-        .on_click(move |_, _, cx| {
-            let provider = provider.clone();
-            view.update(cx, |view, cx| view.select_provider(provider, cx));
-        })
-        .child(provider_logo(
-            &status.provider,
-            &status.display_name,
-            px(24.0),
-        ))
-}
+    fn remove_workspace_ui_state(&mut self, workspace_id: usize) {
+        let node_keys = self
+            .chat_inputs
+            .keys()
+            .chain(self.title_inputs.keys())
+            .chain(self.chat_transcripts.keys())
+            .chain(self.chat_body_views.keys())
+            .copied()
+            .filter(|key| key.0 == workspace_id)
+            .collect::<HashSet<_>>();
+        for (_, node_id) in node_keys {
+            self.remove_session_node_ui_state(workspace_id, node_id);
+        }
 
-fn provider_auth_flow(
-    status: ProviderAuthStatus,
-    api_key_input: Entity<InputState>,
-    status_text: SharedString,
-    pending: bool,
-    view: Entity<PiDesktop>,
-    cx: &mut gpui::App,
-) -> AnyElement {
-    let provider = status.provider.clone();
-    let configured = status.configured;
-    let source = ui::auth_source_label(status.source);
-    let browser_view = view.clone();
-    let save_view = view.clone();
-    let runtime_view = view.clone();
-    let remove_view = view.clone();
+        let text_keys = self
+            .text_box_inputs
+            .keys()
+            .copied()
+            .filter(|key| key.0 == workspace_id)
+            .collect::<Vec<_>>();
+        for key in text_keys {
+            self.text_box_inputs.remove(&key);
+            self.text_box_input_subscriptions.remove(&key);
+            if self.editing_text_box == Some(key) {
+                self.editing_text_box = None;
+            }
+        }
+    }
 
-    div()
-        .border_1()
-        .border_color(theme::hairline())
-        .bg(theme::surface())
-        .p_3()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_3()
-                .child(provider_logo(&provider, &status.display_name, px(28.0)))
-                .child(
-                    div()
-                        .flex_1()
-                        .child(div().font_semibold().child(status.display_name))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(if configured {
-                                    theme::success()
-                                } else {
-                                    theme::text_muted()
-                                })
-                                .child(source),
-                        ),
-                ),
-        )
-        .child(auth_step(
-            "1",
-            auth_title(&provider),
-            auth_detail(&provider),
-        ))
-        .when(provider_supports_browser_auth(&provider), |this| {
-            this.child(
-                pi_button(
-                    "browser-auth",
-                    "Open browser or device auth",
-                    PiButtonKind::Secondary,
-                    cx,
-                )
-                .on_click(move |_, _, cx| {
-                    browser_view.update(cx, |view, cx| {
-                        view.status =
-                            "Browser/device auth UI is staged; backend auth endpoint comes next."
-                                .into();
-                        cx.notify();
-                    });
-                }),
-            )
-        })
-        .child(auth_step(
-            "2",
-            "Fallback API key",
-            &ui::provider_env_hint(&provider),
-        ))
-        .child(pi_input(&api_key_input).h(px(38.0)))
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .child(
-                    pi_button("save-key", "Save", PiButtonKind::Primary, cx)
-                        .loading(pending)
-                        .on_click(move |_, _, cx| {
-                            save_view.update(cx, |view, cx| view.save_api_key(true, cx));
-                        }),
-                )
-                .child(
-                    pi_button("runtime-key", "Use once", PiButtonKind::Ghost, cx).on_click(
-                        move |_, _, cx| {
-                            runtime_view.update(cx, |view, cx| view.save_api_key(false, cx));
-                        },
-                    ),
-                ),
-        )
-        .child(
-            pi_button("remove-auth", "Remove auth", PiButtonKind::Danger, cx).on_click(
-                move |_, _, cx| {
-                    remove_view.update(cx, |view, cx| view.remove_selected_auth(cx));
-                },
-            ),
-        )
-        .child(status_box(status_text))
-        .into_any_element()
-}
+    fn retain_workspace_node_ui_state(
+        &mut self,
+        workspace_id: usize,
+        live_node_ids: &HashSet<usize>,
+    ) {
+        let stale_keys = self
+            .chat_inputs
+            .keys()
+            .chain(self.title_inputs.keys())
+            .chain(self.chat_transcripts.keys())
+            .chain(self.chat_body_views.keys())
+            .copied()
+            .filter(|key| key.0 == workspace_id && !live_node_ids.contains(&key.1))
+            .collect::<HashSet<_>>();
+        for (_, node_id) in stale_keys {
+            self.remove_session_node_ui_state(workspace_id, node_id);
+        }
+    }
 
-fn settings_placeholder(message: &'static str) -> AnyElement {
-    div()
-        .w_full()
-        .border_1()
-        .border_color(theme::hairline())
-        .bg(theme::app_bg())
-        .p_3()
-        .text_sm()
-        .text_color(theme::text_muted())
-        .child(message)
-        .into_any_element()
-}
-
-fn status_box(status: SharedString) -> impl IntoElement {
-    surface::quiet_panel()
-        .p_2()
-        .text_sm()
-        .text_color(theme::text_muted())
-        .child(status)
-}
-
-fn hero_title() -> impl IntoElement {
-    div()
-        .font(font(theme::SERIF_FONT).italic())
-        .text_size(px(44.0))
-        .line_height(px(48.0))
-        .font_weight(gpui::FontWeight(400.0))
-        .text_color(theme::text())
-        .text_center()
-        .child(div().child("There are many agent harnesses,"))
-        .child(
-            div()
-                .flex()
-                .justify_center()
-                .gap_2()
-                .child("but this one is")
-                .child(div().text_color(theme::accent()).child("yours.")),
-        )
-}
-
-fn provider_supports_browser_auth(provider: &str) -> bool {
-    matches!(provider, "openai" | "github-copilot")
-}
-
-fn auth_title(provider: &str) -> &'static str {
-    match provider {
-        "openai" => "Sign in with ChatGPT",
-        "github-copilot" => "Sign in with GitHub",
-        _ => "Authenticate",
+    fn retain_workspace_text_box_ui_state(
+        &mut self,
+        workspace_id: usize,
+        live_drawing_indices: &HashSet<usize>,
+    ) {
+        let stale_keys = self
+            .text_box_inputs
+            .keys()
+            .copied()
+            .filter(|key| key.0 == workspace_id && !live_drawing_indices.contains(&key.1))
+            .collect::<Vec<_>>();
+        for key in stale_keys {
+            self.text_box_inputs.remove(&key);
+            self.text_box_input_subscriptions.remove(&key);
+            if self.editing_text_box == Some(key) {
+                self.editing_text_box = None;
+            }
+        }
     }
 }
 
-fn auth_detail(provider: &str) -> &'static str {
-    match provider {
-        "openai" => "Use browser/device auth for ChatGPT subscription access when available.",
-        "github-copilot" => "Use the GitHub device flow when available.",
-        _ => "Use the provider auth flow when available.",
+impl Focusable for PiDesktop {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
-fn auth_step(number: &'static str, title: &'static str, detail: &str) -> impl IntoElement {
-    div()
-        .flex()
-        .gap_2()
-        .items_start()
-        .child(
-            div()
-                .size_5()
-                .bg(theme::accent())
-                .text_color(theme::app_bg())
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_xs()
-                .font_semibold()
-                .child(number),
-        )
-        .child(
-            div()
-                .flex_1()
-                .child(div().text_sm().font_semibold().child(title))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(detail.to_owned()),
-                ),
-        )
-}
-
-fn provider_logo(provider: &str, display_name: &str, size: gpui::Pixels) -> AnyElement {
-    if let Some(path) = ui::provider_logo_path(provider) {
-        svg()
-            .path(path)
-            .size(size)
-            .text_color(theme::text())
-            .into_any_element()
+fn paint_background_grid_axis(bounds: Bounds<Pixels>, vertical: bool, window: &mut Window) {
+    let spacing = 16.0;
+    let extent = if vertical {
+        f32::from(bounds.size.width)
     } else {
-        div()
-            .size(size)
-            .border_1()
-            .border_color(theme::hairline())
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_xs()
-            .text_color(theme::text_muted())
-            .child(ui::provider_initials(display_name))
-            .into_any_element()
+        f32::from(bounds.size.height)
+    };
+    let line_count = (extent / spacing).ceil() as i32 + 1;
+
+    for index in 0..line_count {
+        let position = index as f32 * spacing;
+        let color = if index % 4 == 0 {
+            theme::grid_major()
+        } else {
+            theme::grid_minor()
+        };
+        let line_bounds = if vertical {
+            Bounds::new(
+                point(bounds.origin.x + px(position), bounds.origin.y),
+                size(px(1.0), bounds.size.height),
+            )
+        } else {
+            Bounds::new(
+                point(bounds.origin.x, bounds.origin.y + px(position)),
+                size(bounds.size.width, px(1.0)),
+            )
+        };
+        window.paint_quad(fill(line_bounds, color));
+    }
+}
+
+fn next_new_folder_name(parent: &Path) -> String {
+    let first = "New Folder".to_owned();
+    if !parent.join(&first).exists() {
+        return first;
+    }
+
+    (2..)
+        .map(|index| format!("New Folder {index}"))
+        .find(|name| !parent.join(name).exists())
+        .unwrap_or(first)
+}
+
+fn valid_new_folder_name(name: &str) -> bool {
+    !name.is_empty()
+        && !Path::new(name).is_absolute()
+        && Path::new(name)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn remove_auto_inserted_enter_newline(
+    input: &Entity<InputState>,
+    window: &mut Window,
+    cx: &mut Context<PiDesktop>,
+) {
+    let (value, cursor) = {
+        let input = input.read(cx);
+        (input.value().to_string(), input.cursor())
+    };
+    let Some(remove_at) = enter_newline_before_cursor(&value, cursor) else {
+        return;
+    };
+
+    let mut cleaned = value;
+    cleaned.remove(remove_at);
+    input.update(cx, |input, cx| input.set_value(cleaned, window, cx));
+}
+
+fn enter_newline_before_cursor(value: &str, cursor: usize) -> Option<usize> {
+    if cursor == 0 || cursor > value.len() {
+        return None;
+    }
+    let remove_at = cursor - 1;
+    value
+        .as_bytes()
+        .get(remove_at)
+        .is_some_and(|byte| *byte == b'\n')
+        .then_some(remove_at)
+}
+
+fn canvas_local_point(screen_position: WorldPoint) -> WorldPoint {
+    WorldPoint::new(screen_position.x, screen_position.y - STATUS_BAR_HEIGHT)
+}
+
+fn minimap_size() -> WorldSize {
+    WorldSize::new(MINIMAP_WIDTH, MINIMAP_HEIGHT)
+}
+
+fn workspace_canvas_size(window: &Window) -> WorldSize {
+    let size = window.bounds().size;
+    WorldSize::new(
+        f32::from(size.width),
+        (f32::from(size.height) - STATUS_BAR_HEIGHT - BOTTOM_DOCK_HEIGHT).max(1.0),
+    )
+}
+
+fn session_node_metadata(state: &CoreStateSnapshot) -> SessionNodeMetadata {
+    SessionNodeMetadata {
+        session_id: state.session_id.clone(),
+        session_name: state.session_name.clone(),
+        session_file: state.session_file.clone(),
+        cwd: state.cwd.clone(),
+        message_count: state.messages.len(),
+    }
+}
+
+fn session_metadata_matches(
+    node_metadata: &SessionNodeMetadata,
+    metadata: &SessionNodeMetadata,
+) -> bool {
+    let matches_session_id = metadata.session_id.is_some()
+        && node_metadata.session_id.as_ref() == metadata.session_id.as_ref();
+    let matches_session_file = metadata.session_file.is_some()
+        && node_metadata.session_file.as_ref() == metadata.session_file.as_ref();
+    matches_session_id || matches_session_file
+}
+
+fn pending_session_node_metadata(primitive: SessionNodePrimitive) -> SessionNodeMetadata {
+    SessionNodeMetadata {
+        session_id: None,
+        session_name: Some(format!("{}…", primitive.label())),
+        session_file: None,
+        cwd: None,
+        message_count: 0,
+    }
+}
+
+fn empty_session_node_metadata() -> SessionNodeMetadata {
+    SessionNodeMetadata {
+        session_id: None,
+        session_name: None,
+        session_file: None,
+        cwd: None,
+        message_count: 0,
+    }
+}
+
+fn latest_json_id(messages: &[serde_json::Value]) -> Option<String> {
+    messages.iter().rev().find_map(latest_json_id_in_value)
+}
+
+fn latest_json_id_in_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Object(object) => object
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+            .or_else(|| object.values().rev().find_map(latest_json_id_in_value)),
+        serde_json::Value::Array(values) => values.iter().rev().find_map(latest_json_id_in_value),
+        _other => None,
+    }
+}
+
+fn auth_update_status(update: &AuthFlowUpdate) -> String {
+    let mut message = update.message.clone();
+    if let Some(user_code) = &update.user_code {
+        message.push_str(" Code: ");
+        message.push_str(user_code);
+    }
+    if let Some(url) = &update.url {
+        message.push_str(" URL: ");
+        message.push_str(url);
+    }
+    message
+}
+
+fn chat_event_status(event: &serde_json::Value) -> String {
+    let event_type = event
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("event");
+    match event_type {
+        "agent_start" => "Pi is working…".to_owned(),
+        "agent_end" => "Pi idle.".to_owned(),
+        "message_start" | "message_update" => "Pi is responding…".to_owned(),
+        "message_end" => "Pi response complete.".to_owned(),
+        "tool_execution_start" | "tool_execution_update" => format!(
+            "Running {}…",
+            event
+                .get("toolName")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("tool")
+        ),
+        "tool_execution_end" => format!(
+            "Finished {}.",
+            event
+                .get("toolName")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("tool")
+        ),
+        other => format!("Pi {other}"),
+    }
+}
+
+const BROWSER_AUTH: [OAuthLoginMethod; 1] = [OAuthLoginMethod::Browser];
+const DEVICE_AUTH: [OAuthLoginMethod; 1] = [OAuthLoginMethod::DeviceCode];
+const BROWSER_AND_DEVICE_AUTH: [OAuthLoginMethod; 2] =
+    [OAuthLoginMethod::Browser, OAuthLoginMethod::DeviceCode];
+const NO_OAUTH_METHODS: [OAuthLoginMethod; 0] = [];
+
+pub(crate) fn oauth_methods_for(provider: &str) -> &'static [OAuthLoginMethod] {
+    match provider {
+        "anthropic" => &BROWSER_AUTH,
+        "github-copilot" => &DEVICE_AUTH,
+        "openai-codex" => &BROWSER_AND_DEVICE_AUTH,
+        _ => &NO_OAUTH_METHODS,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enter_newline_before_cursor;
+
+    #[test]
+    fn detects_auto_inserted_enter_newline_before_cursor() {
+        assert_eq!(enter_newline_before_cursor("hello\n", 6), Some(5));
+        assert_eq!(enter_newline_before_cursor("hello", 5), None);
+        assert_eq!(enter_newline_before_cursor("hello\n", 0), None);
     }
 }

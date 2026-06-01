@@ -1,3 +1,16 @@
+pub mod auth_settings;
+pub mod bottom_dock;
 pub mod button;
+pub mod chat_node;
+pub mod file_picker;
 pub mod input;
-pub mod surface;
+pub mod package_settings;
+pub mod pinned_panels;
+pub mod provider_logo;
+pub mod theme_settings;
+pub mod workspace_canvas;
+mod workspace_canvas_markers;
+mod workspace_canvas_minimap;
+mod workspace_canvas_toolbar;
+pub mod workspace_launcher;
+pub mod workspace_tabs;

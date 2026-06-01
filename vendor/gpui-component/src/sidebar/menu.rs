@@ -205,7 +205,7 @@ impl RenderOnce for SidebarMenuItem {
                     .flex_shrink_0()
                     .p_2()
                     .gap_x_2()
-                    .rounded(cx.theme().radius)
+                    .rounded(gpui::px(0.0))
                     .text_sm()
                     .when(is_hoverable, |this| {
                         this.hover(|this| {

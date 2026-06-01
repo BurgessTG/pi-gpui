@@ -25,6 +25,55 @@ pub struct ProviderAuthStatus {
     pub label: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageSearchResponse {
+    pub query: String,
+    pub limit: u32,
+    pub total: u32,
+    pub results: Vec<PackageSearchResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageSearchResult {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub publisher: Option<String>,
+    pub monthly_downloads: Option<u32>,
+    pub updated: Option<String>,
+    pub resource_types: Vec<String>,
+    pub install_command: String,
+    pub npm_url: String,
+    pub repository_url: Option<String>,
+    pub homepage_url: Option<String>,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledPackage {
+    pub source: String,
+    pub display_name: String,
+    pub scope: PackageScope,
+    pub filtered: bool,
+    pub installed_path: Option<String>,
+    pub version: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum PackageScope {
+    User,
+    Project,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]

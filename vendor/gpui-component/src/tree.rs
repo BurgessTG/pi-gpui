@@ -228,6 +228,18 @@ impl TreeState {
         cx.notify();
     }
 
+    /// Select the visible entry with the given item id.
+    pub fn set_selected_id(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
+        let Some(ix) = self.entries.iter().position(|entry| entry.item.id.as_ref() == id) else {
+            return false;
+        };
+        self.selected_ix = Some(ix);
+        self.scroll_handle
+            .scroll_to_item(ix, gpui::ScrollStrategy::Center);
+        cx.notify();
+        true
+    }
+
     pub fn scroll_to_item(&mut self, ix: usize, strategy: gpui::ScrollStrategy) {
         self.scroll_handle.scroll_to_item(ix, strategy);
     }

@@ -14,6 +14,7 @@ pub enum BridgeEvent {
     PiSessionEvent { event: serde_json::Value },
     QueueUpdate { queue: QueueSnapshot },
     BashChunk { chunk: String },
+    AuthFlowUpdate { update: AuthFlowUpdate },
     ExtensionUiRequest { request: ExtensionUiRequest },
     ExtensionUiUpdate { update: ExtensionUiUpdate },
     ComponentRenderRequest { request: ComponentRenderRequest },
@@ -35,6 +36,16 @@ pub struct ReadyEvent {
 pub struct LogEvent {
     pub level: LogLevel,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthFlowUpdate {
+    pub provider: String,
+    pub message: String,
+    pub url: Option<String>,
+    pub user_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
