@@ -1,6 +1,6 @@
 import type { BridgeEvent, BridgeEventEnvelope, BridgeResponse, BridgeResponseEnvelope, RequestId } from '../generated/protocol.js'
 
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 export function ok(requestId: RequestId, value: BridgeResponse): BridgeResponseEnvelope {
   return {

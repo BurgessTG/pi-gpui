@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
 use pi_bridge_types::{
@@ -47,7 +49,7 @@ impl BackendSession {
             .enable_all()
             .build()
             .context("create frontend backend runtime")?;
-        let bootstrap_path = bootstrap_path();
+        let bootstrap_path = bootstrap_path()?;
         let libnode_path = libnode_path();
         let (auth_updates, _) = broadcast::channel(128);
         let (event_updates, _) = broadcast::channel(512);
@@ -338,10 +340,66 @@ fn workspace_root() -> PathBuf {
         .unwrap_or(manifest)
 }
 
-fn bootstrap_path() -> PathBuf {
-    std::env::var_os("PI_GPUI_BOOTSTRAP")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join("node/dist/bootstrap.js"))
+fn bootstrap_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("PI_GPUI_BOOTSTRAP") {
+        return Ok(PathBuf::from(path));
+    }
+    let root = workspace_root();
+    let bootstrap = root.join("node/dist/bootstrap.js");
+    ensure_node_dist_current(&root, &bootstrap)?;
+    Ok(bootstrap)
+}
+
+fn ensure_node_dist_current(root: &Path, bootstrap: &Path) -> Result<()> {
+    if std::env::var_os("PI_GPUI_SKIP_NODE_BUILD").is_some() {
+        return Ok(());
+    }
+    let node_dir = root.join("node");
+    let source_dir = node_dir.join("src");
+    let dist_mtime = modified_time(bootstrap);
+    let source_mtime = newest_modified_time(&source_dir)?;
+    let needs_build = match (dist_mtime, source_mtime) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(dist), Some(source)) => source > dist,
+    };
+    if !needs_build {
+        return Ok(());
+    }
+
+    let status = Command::new("npm")
+        .arg("run")
+        .arg("build")
+        .current_dir(&node_dir)
+        .status()
+        .context("run npm build for embedded Pi node backend")?;
+    anyhow::ensure!(
+        status.success(),
+        "npm run build failed for embedded Pi node backend"
+    );
+    Ok(())
+}
+
+fn newest_modified_time(path: &Path) -> Result<Option<SystemTime>> {
+    let mut newest = modified_time(path);
+    if !path.is_dir() {
+        return Ok(newest);
+    }
+    for entry in fs::read_dir(path).with_context(|| format!("read {}", path.display()))? {
+        let entry = entry?;
+        let child = entry.path();
+        let child_newest = newest_modified_time(&child)?;
+        if child_newest > newest {
+            newest = child_newest;
+        }
+    }
+    Ok(newest)
+}
+
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
 }
 
 fn libnode_path() -> PathBuf {

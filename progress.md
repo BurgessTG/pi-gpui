@@ -12,15 +12,17 @@ Complete locally; validated end-to-end.
 - Added dynamic minimap world bounds for distant/unbounded canvas content.
 - Added node spatial indexing, drawing broadphase culling, cached drawing path geometry, and block-level markdown view caching.
 - Preserved entity/cached GPUI rendering architecture, transcript virtualization, pinned panels, world-space zoom, animations, markdown, and env-gated render tracing.
+- Fixed the stale `node/dist` failure mode by auto-building the embedded Node backend when TypeScript sources are newer than the generated runtime bundle, and bumped the bridge protocol version to catch mismatched bundles clearly.
 
 ## Validation
 - `cargo fmt --check`
 - `cargo check --workspace --all-targets`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
+- `cd node && npm run build`
 - `cd node && npm run typecheck`
 - `cd node && npm test`
 - `cd node && npm run check-protocol`
 - `git diff --check`
 - LSP diagnostics on workspace: clean.
-- `timeout 6s cargo run -p pi-desktop` compiled and launched the app, then was intentionally terminated by timeout.
+- `timeout 8s cargo run -p pi-desktop` compiled and launched the app, then was intentionally terminated by timeout.
