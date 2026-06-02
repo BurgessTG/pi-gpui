@@ -15,6 +15,7 @@ Complete locally; validated end-to-end.
 - Fixed the stale `node/dist` failure mode by auto-building the embedded Node backend when TypeScript sources are newer than the generated runtime bundle, and bumped the bridge protocol version to catch mismatched bundles clearly.
 - Fixed scroll ownership so node hover/scroll stops wheel propagation to canvas zoom, while canvas wheel zoom remains active on bare canvas.
 - Reduced streaming/runtime jank by batching backend stream events per frame and removing redundant per-session-event global state snapshots from the Node bridge.
+- Added a second performance pass after live lag reports: coalesced SDK `message_update` events in Node before JSON crossing, grouped Rust bridge events by session target across each batch, and deferred markdown rendering for actively streaming assistant text until completion.
 
 ## Validation
 - `cargo fmt --check`

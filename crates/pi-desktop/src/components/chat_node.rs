@@ -78,7 +78,9 @@ impl ChatMessageView {
     }
 
     fn sync_markdown_blocks(&mut self, cx: &mut Context<Self>) {
-        if let ChatEntry::Assistant { text, .. } = &self.entry {
+        if let ChatEntry::Assistant { text, status } = &self.entry
+            && !matches!(status, AssistantStatus::Streaming)
+        {
             sync_markdown_blocks(
                 &mut self.markdown_blocks,
                 self.workspace_id,
@@ -635,8 +637,8 @@ fn render_transcript_entry(
 ) -> AnyElement {
     match entry {
         ChatEntry::User(text) => render_user_message(text, scale),
-        ChatEntry::Assistant { status, .. } => {
-            render_assistant_message(markdown_blocks, status, scale)
+        ChatEntry::Assistant { text, status } => {
+            render_assistant_message(text, markdown_blocks, status, scale)
         }
         ChatEntry::Tool(tool) => render_tool_run(tool, scale),
     }
@@ -666,7 +668,17 @@ fn render_user_message(text: &str, scale: f32) -> AnyElement {
         .into_any_element()
 }
 
+fn render_streaming_assistant_text(text: &str, scale: f32) -> AnyElement {
+    div()
+        .w_full()
+        .text_size(scaled_px(14.0, scale))
+        .text_color(theme::text())
+        .child(text.to_owned())
+        .into_any_element()
+}
+
 fn render_assistant_message(
+    text: &str,
     markdown_blocks: &[Entity<MarkdownBlockView>],
     status: &AssistantStatus,
     scale: f32,
@@ -676,7 +688,11 @@ fn render_assistant_message(
     v_flex()
         .w_full()
         .gap(scaled_px(8.0, scale))
-        .child(render_markdown_blocks(markdown_blocks))
+        .child(if matches!(status, AssistantStatus::Streaming) {
+            render_streaming_assistant_text(text, scale)
+        } else {
+            render_markdown_blocks(markdown_blocks)
+        })
         .when_some(detail, |this, detail| {
             this.child(
                 div()

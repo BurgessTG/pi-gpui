@@ -166,8 +166,8 @@ impl PiDesktop {
         envelopes: Vec<BridgeEventEnvelope>,
         cx: &mut Context<Self>,
     ) {
-        let mut session_events = Vec::new();
-        let mut session_target: (Option<String>, Option<String>) = (None, None);
+        let mut session_events: HashMap<(Option<String>, Option<String>), Vec<serde_json::Value>> =
+            HashMap::new();
         for envelope in envelopes {
             match envelope.event {
                 BridgeEvent::PiSessionEvent {
@@ -175,41 +175,23 @@ impl PiDesktop {
                     session_file,
                     event,
                 } => {
-                    let target = (session_id, session_file);
-                    if !session_events.is_empty() && session_target != target {
-                        self.apply_session_events(
-                            session_target.0.as_deref(),
-                            session_target.1.as_deref(),
-                            std::mem::take(&mut session_events),
-                            cx,
-                        );
-                    }
-                    session_target = target;
-                    session_events.push(event);
+                    session_events
+                        .entry((session_id, session_file))
+                        .or_default()
+                        .push(event);
                 }
-                event => {
-                    self.apply_session_events(
-                        session_target.0.as_deref(),
-                        session_target.1.as_deref(),
-                        std::mem::take(&mut session_events),
-                        cx,
-                    );
-                    self.apply_bridge_event(
-                        BridgeEventEnvelope {
-                            version: envelope.version,
-                            event,
-                        },
-                        cx,
-                    );
-                }
+                event => self.apply_bridge_event(
+                    BridgeEventEnvelope {
+                        version: envelope.version,
+                        event,
+                    },
+                    cx,
+                ),
             }
         }
-        self.apply_session_events(
-            session_target.0.as_deref(),
-            session_target.1.as_deref(),
-            session_events,
-            cx,
-        );
+        for ((session_id, session_file), events) in session_events {
+            self.apply_session_events(session_id.as_deref(), session_file.as_deref(), events, cx);
+        }
     }
 
     fn apply_session_events(

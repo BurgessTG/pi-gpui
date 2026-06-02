@@ -54,7 +54,11 @@ type RuntimeServices = {
 	ui: NativeExtensionUi;
 	unsubscribe?: () => void;
 	sessionKeys?: Set<string>;
+	pendingMessageUpdate?: unknown;
+	messageUpdateTimer?: ReturnType<typeof setTimeout> | undefined;
 };
+
+const MESSAGE_UPDATE_FLUSH_MS = 50;
 
 export class PiRuntimeBackend {
 	private services: RuntimeServices | undefined;
@@ -629,19 +633,17 @@ export class PiRuntimeBackend {
 
 	private async bindSession(current: RuntimeServices): Promise<void> {
 		current.unsubscribe?.();
+		this.cancelPendingMessageUpdate(current);
 		this.rememberRuntime(current);
 		current.unsubscribe = current.runtime.session.subscribe((event) => {
-			emitEvent(
-				eventEnvelope({
-					type: "piSessionEvent",
-					payload: {
-						sessionId: current.runtime.session.sessionId ?? null,
-						sessionFile: current.runtime.session.sessionFile ?? null,
-						event: asJson(event),
-					},
-				}),
-			);
-			if ((event as { type?: string }).type === "queue_update") {
+			const eventType = (event as { type?: string }).type;
+			if (eventType === "message_update") {
+				this.scheduleMessageUpdate(current, event);
+				return;
+			}
+			this.flushPendingMessageUpdate(current);
+			this.emitSessionEvent(current, event);
+			if (eventType === "queue_update") {
 				const queueEvent = event as unknown as {
 					steering: string[];
 					followUp: string[];
@@ -677,6 +679,43 @@ export class PiRuntimeBackend {
 				},
 			});
 		}
+	}
+
+	private emitSessionEvent(services: RuntimeServices, event: unknown): void {
+		emitEvent(
+			eventEnvelope({
+				type: "piSessionEvent",
+				payload: {
+					sessionId: services.runtime.session.sessionId ?? null,
+					sessionFile: services.runtime.session.sessionFile ?? null,
+					event: asJson(event),
+				},
+			}),
+		);
+	}
+
+	private scheduleMessageUpdate(services: RuntimeServices, event: unknown): void {
+		services.pendingMessageUpdate = event;
+		if (services.messageUpdateTimer) return;
+		services.messageUpdateTimer = setTimeout(() => {
+			services.messageUpdateTimer = undefined;
+			this.flushPendingMessageUpdate(services);
+		}, MESSAGE_UPDATE_FLUSH_MS);
+	}
+
+	private flushPendingMessageUpdate(services: RuntimeServices): void {
+		const event = services.pendingMessageUpdate;
+		if (!event) return;
+		services.pendingMessageUpdate = undefined;
+		this.emitSessionEvent(services, event);
+	}
+
+	private cancelPendingMessageUpdate(services: RuntimeServices): void {
+		if (services.messageUpdateTimer) {
+			clearTimeout(services.messageUpdateTimer);
+			services.messageUpdateTimer = undefined;
+		}
+		services.pendingMessageUpdate = undefined;
 	}
 
 	private configureRuntimeServices(services: RuntimeServices): void {
@@ -1046,6 +1085,8 @@ export class PiRuntimeBackend {
 		const uniqueServices = new Set(this.sessionRuntimes.values());
 		if (this.services) uniqueServices.add(this.services);
 		for (const services of uniqueServices) {
+			this.flushPendingMessageUpdate(services);
+			this.cancelPendingMessageUpdate(services);
 			services.unsubscribe?.();
 			services.ui.dispose();
 			await services.runtime.dispose();
