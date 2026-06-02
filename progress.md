@@ -13,6 +13,8 @@ Complete locally; validated end-to-end.
 - Added node spatial indexing, drawing broadphase culling, cached drawing path geometry, and block-level markdown view caching.
 - Preserved entity/cached GPUI rendering architecture, transcript virtualization, pinned panels, world-space zoom, animations, markdown, and env-gated render tracing.
 - Fixed the stale `node/dist` failure mode by auto-building the embedded Node backend when TypeScript sources are newer than the generated runtime bundle, and bumped the bridge protocol version to catch mismatched bundles clearly.
+- Fixed scroll ownership so node hover/scroll stops wheel propagation to canvas zoom, while canvas wheel zoom remains active on bare canvas.
+- Reduced streaming/runtime jank by batching backend stream events per frame and removing redundant per-session-event global state snapshots from the Node bridge.
 
 ## Validation
 - `cargo fmt --check`

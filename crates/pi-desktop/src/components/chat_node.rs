@@ -1,8 +1,9 @@
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, Context, CursorStyle, Entity, Hsla,
     InteractiveElement as _, IntoElement, ListAlignment, ListOffset, ListState, MouseButton,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, StyleRefinement,
-    Styled as _, Subscription, Window, div, list, prelude::FluentBuilder as _, px, svg,
+    ParentElement as _, Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled as _, Subscription, Window, div, list, prelude::FluentBuilder as _, px,
+    svg,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement as _;
@@ -318,6 +319,7 @@ impl Render for ChatNodeView {
             .text_color(theme::text())
             .text_size(scaled_px(14.0, scale))
             .flex()
+            .on_scroll_wheel(|_: &ScrollWheelEvent, _window, cx| cx.stop_propagation())
             .flex_col()
             .on_mouse_down(
                 MouseButton::Left,

@@ -71,6 +71,7 @@ const MINIMAP_WIDTH: f32 = 148.0;
 const MINIMAP_HEIGHT: f32 = 108.0;
 const NEW_FOLDER_ROW_ANIMATION: Duration = Duration::from_millis(180);
 const FRAME_RENDER_INTERVAL: Duration = Duration::from_millis(8);
+const BACKEND_EVENT_BATCH_INTERVAL: Duration = Duration::from_millis(16);
 
 fn drawer_animation() -> Animation {
     Animation::new(DRAWER_ANIMATION_DURATION).with_easing(cubic_bezier(0.32, 0.72, 0.0, 1.0))

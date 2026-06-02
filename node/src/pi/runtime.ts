@@ -70,7 +70,6 @@ export class PiRuntimeBackend {
 	private selectedModel: Model<string> | undefined;
 	private enableExtensions = true;
 	private resourceCache: RuntimeResourceCache | undefined;
-	private snapshotTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async dispatch(command: BridgeCommand): Promise<BridgeResponse> {
 		switch (command.type) {
@@ -661,7 +660,6 @@ export class PiRuntimeBackend {
 					}),
 				);
 			}
-			this.scheduleSnapshot();
 		});
 		if (this.enableExtensions) {
 			await current.runtime.session.bindExtensions({
@@ -1015,14 +1013,6 @@ export class PiRuntimeBackend {
 		}));
 	}
 
-	private scheduleSnapshot(): void {
-		if (this.snapshotTimer) return;
-		this.snapshotTimer = setTimeout(() => {
-			this.snapshotTimer = undefined;
-			this.emitSnapshot();
-		}, 8);
-	}
-
 	private emitSnapshot(): void {
 		emitEvent(
 			eventEnvelope({
@@ -1053,10 +1043,6 @@ export class PiRuntimeBackend {
 	}
 
 	private async dispose(): Promise<void> {
-		if (this.snapshotTimer) {
-			clearTimeout(this.snapshotTimer);
-			this.snapshotTimer = undefined;
-		}
 		const uniqueServices = new Set(this.sessionRuntimes.values());
 		if (this.services) uniqueServices.add(this.services);
 		for (const services of uniqueServices) {

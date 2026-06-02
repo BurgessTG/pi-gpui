@@ -118,9 +118,10 @@ impl PiDesktop {
                     .background_spawn(async move {
                         let result = match receiver.recv().await {
                             Ok(first) => {
-                                let mut events = Vec::with_capacity(32);
+                                let mut events = Vec::with_capacity(128);
                                 events.push(first);
-                                while events.len() < 128 {
+                                Timer::after(BACKEND_EVENT_BATCH_INTERVAL).await;
+                                while events.len() < 512 {
                                     match receiver.try_recv() {
                                         Ok(event) => events.push(event),
                                         Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
