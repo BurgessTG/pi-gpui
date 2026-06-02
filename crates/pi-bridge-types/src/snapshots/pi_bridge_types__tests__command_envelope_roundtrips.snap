@@ -1,6 +1,6 @@
 ---
 source: crates/pi-bridge-types/src/lib.rs
-assertion_line: 134
+assertion_line: 135
 expression: restored
 ---
 {
@@ -9,6 +9,7 @@ expression: restored
   "command": {
     "type": "prompt",
     "payload": {
+      "sessionPath": null,
       "text": "hello",
       "images": [],
       "streamingBehavior": null

@@ -25,6 +25,7 @@ use crate::workspace::canvas::{
     CanvasDrawing, CanvasDrawingBounds, CanvasDrawingDraft, CanvasDrawingTool, CanvasState,
     CanvasViewport, WorldPoint, WorldSize,
 };
+use crate::workspace::canvas_geometry::{DrawingPathCommand, DrawingPathGeometry};
 use crate::workspace::state::WorkspaceTab;
 
 actions!(
@@ -187,35 +188,41 @@ pub fn workspace_canvas(
             canvas_size,
             cx,
         ))
-        .children(canvas.nodes().iter().filter_map(|node| {
-            if pinned_layout.is_pinned(node.id()) {
-                return None;
-            }
-            let screen_position = viewport.world_to_screen(node.position());
-            let node_size = node.size();
-            let screen_size = WorldSize::new(
-                node_size.width * viewport.zoom,
-                node_size.height * viewport.zoom,
-            );
-            if !node_visible(screen_position, screen_size, canvas_size) {
-                return None;
-            }
-            let node_view = chat_node_views.get(&node.id())?.clone();
-            Some(
-                div()
-                    .id(SharedString::from(format!(
-                        "chat-node-frame-{workspace_id}-{}",
-                        node.id()
-                    )))
-                    .absolute()
-                    .left(px(screen_position.x))
-                    .top(px(screen_position.y))
-                    .w(px(screen_size.width))
-                    .h(px(screen_size.height))
-                    .child(node_view)
-                    .into_any_element(),
-            )
-        }))
+        .children(
+            canvas
+                .node_indices_in_bounds(&visible_world_bounds(viewport, canvas_size, 48.0))
+                .into_iter()
+                .filter_map(|index| {
+                    let node = canvas.nodes().get(index)?;
+                    if pinned_layout.is_pinned(node.id()) {
+                        return None;
+                    }
+                    let screen_position = viewport.world_to_screen(node.position());
+                    let node_size = node.size();
+                    let screen_size = WorldSize::new(
+                        node_size.width * viewport.zoom,
+                        node_size.height * viewport.zoom,
+                    );
+                    if !node_visible(screen_position, screen_size, canvas_size) {
+                        return None;
+                    }
+                    let node_view = chat_node_views.get(&node.id())?.clone();
+                    Some(
+                        div()
+                            .id(SharedString::from(format!(
+                                "chat-node-frame-{workspace_id}-{}",
+                                node.id()
+                            )))
+                            .absolute()
+                            .left(px(screen_position.x))
+                            .top(px(screen_position.y))
+                            .w(px(screen_size.width))
+                            .h(px(screen_size.height))
+                            .child(node_view)
+                            .into_any_element(),
+                    )
+                }),
+        )
         .child(render_minimap(canvas, canvas_size, cx))
         .child(render_drawing_tool_overlay(
             drawing_tools_visible,
@@ -245,10 +252,13 @@ fn render_drawings(
         .drawing_indices_in_bounds(&visible_bounds)
         .into_iter()
         .filter_map(|index| {
-            canvas_state
-                .drawings()
-                .get(index)
-                .map(|drawing| (index, drawing.clone()))
+            canvas_state.drawings().get(index).map(|drawing| {
+                (
+                    index,
+                    drawing.clone(),
+                    canvas_state.drawing_path_geometry(index).cloned(),
+                )
+            })
         })
         .collect::<Vec<_>>();
     let draft = canvas_state.drawing_draft().cloned();
@@ -259,9 +269,10 @@ fn render_drawings(
     canvas(
         move |_, _, _| (),
         move |bounds, _, window, _| {
-            for (index, drawing) in drawings.iter() {
+            for (index, drawing, geometry) in drawings.iter() {
                 paint_drawing(
                     drawing,
+                    geometry.as_ref(),
                     selected_index == Some(*index),
                     viewport,
                     bounds,
@@ -287,6 +298,7 @@ fn render_drawings(
 #[allow(clippy::too_many_arguments)]
 fn paint_drawing(
     drawing: &CanvasDrawing,
+    geometry: Option<&DrawingPathGeometry>,
     selected: bool,
     viewport: CanvasViewport,
     bounds: Bounds<Pixels>,
@@ -297,7 +309,11 @@ fn paint_drawing(
 ) {
     match drawing {
         CanvasDrawing::Pen { points } => {
-            paint_smooth_path(points, viewport, bounds, color, stroke_width, window)
+            if let Some(geometry) = geometry {
+                paint_path_geometry(geometry, viewport, bounds, color, stroke_width, window);
+            } else {
+                paint_smooth_path(points, viewport, bounds, color, stroke_width, window);
+            }
         }
         CanvasDrawing::Line { start, end } => {
             paint_line(*start, *end, viewport, bounds, color, stroke_width, window);
@@ -387,6 +403,55 @@ fn paint_drawing_draft(
         }
         CanvasDrawingTool::Select | CanvasDrawingTool::Eraser | CanvasDrawingTool::NumberMarker => {
         }
+    }
+}
+
+fn paint_path_geometry(
+    geometry: &DrawingPathGeometry,
+    viewport: CanvasViewport,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    stroke_width: f32,
+    window: &mut Window,
+) {
+    if geometry.commands.len() == 1
+        && let Some(DrawingPathCommand::Move(point)) = geometry.commands.first().copied()
+    {
+        paint_round_dot(
+            drawing_point(point, viewport, bounds),
+            color,
+            stroke_width,
+            window,
+        );
+        return;
+    }
+
+    let mut builder = rounded_stroke_builder(stroke_width);
+    let mut started = false;
+    for command in &geometry.commands {
+        match *command {
+            DrawingPathCommand::Move(point) => {
+                builder.move_to(drawing_point(point, viewport, bounds));
+                started = true;
+            }
+            DrawingPathCommand::Line(point) if started => {
+                builder.line_to(drawing_point(point, viewport, bounds));
+            }
+            DrawingPathCommand::Cubic {
+                target,
+                control_a,
+                control_b,
+            } if started => builder.cubic_bezier_to(
+                drawing_point(target, viewport, bounds),
+                drawing_point(control_a, viewport, bounds),
+                drawing_point(control_b, viewport, bounds),
+            ),
+            DrawingPathCommand::Line(_) | DrawingPathCommand::Cubic { .. } => {}
+        }
+    }
+
+    if let Ok(path) = builder.build() {
+        window.paint_path(path, color);
     }
 }
 

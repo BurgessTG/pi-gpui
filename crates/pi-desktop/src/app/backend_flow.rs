@@ -166,11 +166,33 @@ impl PiDesktop {
         cx: &mut Context<Self>,
     ) {
         let mut session_events = Vec::new();
+        let mut session_target: (Option<String>, Option<String>) = (None, None);
         for envelope in envelopes {
             match envelope.event {
-                BridgeEvent::PiSessionEvent { event } => session_events.push(event),
+                BridgeEvent::PiSessionEvent {
+                    session_id,
+                    session_file,
+                    event,
+                } => {
+                    let target = (session_id, session_file);
+                    if !session_events.is_empty() && session_target != target {
+                        self.apply_session_events(
+                            session_target.0.as_deref(),
+                            session_target.1.as_deref(),
+                            std::mem::take(&mut session_events),
+                            cx,
+                        );
+                    }
+                    session_target = target;
+                    session_events.push(event);
+                }
                 event => {
-                    self.apply_session_events(std::mem::take(&mut session_events), cx);
+                    self.apply_session_events(
+                        session_target.0.as_deref(),
+                        session_target.1.as_deref(),
+                        std::mem::take(&mut session_events),
+                        cx,
+                    );
                     self.apply_bridge_event(
                         BridgeEventEnvelope {
                             version: envelope.version,
@@ -181,14 +203,25 @@ impl PiDesktop {
                 }
             }
         }
-        self.apply_session_events(session_events, cx);
+        self.apply_session_events(
+            session_target.0.as_deref(),
+            session_target.1.as_deref(),
+            session_events,
+            cx,
+        );
     }
 
-    fn apply_session_events(&mut self, events: Vec<serde_json::Value>, cx: &mut Context<Self>) {
+    fn apply_session_events(
+        &mut self,
+        session_id: Option<&str>,
+        session_file: Option<&str>,
+        events: Vec<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
         if events.is_empty() {
             return;
         }
-        let Some(key) = self.streaming_node else {
+        let Some(key) = self.node_key_for_session_event(session_id, session_file) else {
             return;
         };
         let status = events.last().map(chat_event_status);
@@ -202,14 +235,40 @@ impl PiDesktop {
         }
     }
 
+    fn node_key_for_session_event(
+        &self,
+        session_id: Option<&str>,
+        session_file: Option<&str>,
+    ) -> Option<(usize, usize)> {
+        self.workspace_state.tabs().iter().find_map(|tab| {
+            tab.canvas().nodes().iter().find_map(|node| {
+                let metadata = node.metadata();
+                let matches_id =
+                    session_id.is_some() && metadata.session_id.as_deref() == session_id;
+                let matches_file =
+                    session_file.is_some() && metadata.session_file.as_deref() == session_file;
+                (matches_id || matches_file).then_some((tab.id(), node.id()))
+            })
+        })
+    }
+
     pub(super) fn apply_bridge_event(
         &mut self,
         envelope: BridgeEventEnvelope,
         cx: &mut Context<Self>,
     ) {
         match envelope.event {
-            BridgeEvent::PiSessionEvent { event } => {
-                self.apply_session_events(vec![event], cx);
+            BridgeEvent::PiSessionEvent {
+                session_id,
+                session_file,
+                event,
+            } => {
+                self.apply_session_events(
+                    session_id.as_deref(),
+                    session_file.as_deref(),
+                    vec![event],
+                    cx,
+                );
             }
             BridgeEvent::StateSnapshot { state } => {
                 if let Some(data) = &mut self.data {
@@ -217,7 +276,7 @@ impl PiDesktop {
                     self.request_event_render(cx);
                 }
             }
-            BridgeEvent::QueueUpdate { queue } => {
+            BridgeEvent::QueueUpdate { queue, .. } => {
                 if let Some(state) = self.data.as_mut().and_then(|data| data.state.as_mut()) {
                     state.queue = queue;
                     self.request_event_render(cx);

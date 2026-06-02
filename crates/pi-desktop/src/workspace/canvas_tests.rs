@@ -103,15 +103,40 @@ fn minimap_click_jumps_and_drag_controls_viewport() {
     let viewport_size = WorldSize::new(1_000.0, 500.0);
 
     assert!(canvas.start_minimap_pan(WorldPoint::new(25.0, 25.0), minimap_size, viewport_size,));
-    assert_eq!(canvas.viewport().pan_x, 1_500.0);
-    assert_eq!(canvas.viewport().pan_y, 900.0);
+    assert_eq!(canvas.viewport().pan_x, 1_660.0);
+    assert_eq!(canvas.viewport().pan_y, 1_060.0);
 
     assert!(canvas.update_minimap_pan(WorldPoint::new(35.0, 25.0), minimap_size));
-    assert_eq!(canvas.viewport().pan_x, 1_100.0);
-    assert_eq!(canvas.viewport().pan_y, 900.0);
+    assert_eq!(canvas.viewport().pan_x, 1_196.0);
+    assert_eq!(canvas.viewport().pan_y, 1_060.0);
 
     assert!(canvas.end_minimap_pan());
     assert!(!canvas.update_minimap_pan(WorldPoint::new(40.0, 40.0), minimap_size));
+}
+
+#[test]
+fn minimap_expands_to_include_distant_workspace_content() {
+    let mut canvas = CanvasState::new();
+    let minimap_size = WorldSize::new(100.0, 100.0);
+    let viewport_size = WorldSize::new(1_000.0, 500.0);
+    let node_id =
+        canvas.add_session_node(SessionNodePrimitive::NewSession, empty_metadata(), false);
+    assert!(canvas.start_node_drag(node_id, WorldPoint::new(0.0, 0.0)));
+    assert!(canvas.update_node_drag(WorldPoint::new(8_000.0, 4_000.0), false));
+    assert!(canvas.end_node_drag());
+
+    let marker = canvas.node_minimap_position(
+        WorldPoint::new(8_000.0, 4_000.0),
+        minimap_size,
+        viewport_size,
+    );
+    assert!(marker.x > 80.0);
+    assert!(marker.y > 75.0);
+
+    let origin =
+        canvas.node_minimap_position(WorldPoint::new(0.0, 0.0), minimap_size, viewport_size);
+    assert!(origin.x < 25.0);
+    assert!(origin.y < 35.0);
 }
 
 #[test]

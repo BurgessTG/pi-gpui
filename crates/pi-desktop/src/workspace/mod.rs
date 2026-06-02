@@ -1,4 +1,5 @@
 pub mod canvas;
+pub mod canvas_geometry;
 mod canvas_model;
 mod canvas_session;
 mod canvas_spatial;

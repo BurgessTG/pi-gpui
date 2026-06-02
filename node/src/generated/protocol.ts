@@ -73,6 +73,7 @@ export type { RequestId } from "./bindings/RequestId.js";
 export type { SearchPackagesCommand } from "./bindings/SearchPackagesCommand.js";
 export type { SelectRequest } from "./bindings/SelectRequest.js";
 export type { JsonValue } from "./bindings/serde_json/JsonValue.js";
+export type { SessionStateCommand } from "./bindings/SessionStateCommand.js";
 export type { SessionTarget } from "./bindings/SessionTarget.js";
 export type { SetActiveToolsCommand } from "./bindings/SetActiveToolsCommand.js";
 export type { SetApiKeyCommand } from "./bindings/SetApiKeyCommand.js";

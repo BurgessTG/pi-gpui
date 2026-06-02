@@ -12,6 +12,8 @@ fn reducer_tracks_ready_and_queue() -> Result<(), Box<dyn std::error::Error>> {
         },
     )))?;
     state.apply_event(BridgeEventEnvelope::new(BridgeEvent::QueueUpdate {
+        session_id: None,
+        session_file: None,
         queue: QueueSnapshot {
             steering: vec!["a".to_owned()],
             follow_up: vec!["b".to_owned()],
@@ -27,6 +29,8 @@ fn reducer_tracks_ready_and_queue() -> Result<(), Box<dyn std::error::Error>> {
 fn reducer_extracts_text_deltas() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = BackendState::new();
     state.apply_event(BridgeEventEnvelope::new(BridgeEvent::PiSessionEvent {
+        session_id: None,
+        session_file: None,
         event: serde_json::json!({
             "type": "message_update",
             "assistantMessageEvent": { "type": "text_delta", "delta": "hello" }

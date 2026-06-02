@@ -8,16 +8,48 @@ use crate::state::{CoreStateSnapshot, Diagnostic, QueueSnapshot};
 pub enum BridgeEvent {
     Ready(ReadyEvent),
     Log(LogEvent),
-    FatalError { error: BridgeError },
-    Diagnostics { diagnostics: Vec<Diagnostic> },
-    StateSnapshot { state: CoreStateSnapshot },
-    PiSessionEvent { event: serde_json::Value },
-    QueueUpdate { queue: QueueSnapshot },
-    BashChunk { chunk: String },
-    AuthFlowUpdate { update: AuthFlowUpdate },
-    ExtensionUiRequest { request: ExtensionUiRequest },
-    ExtensionUiUpdate { update: ExtensionUiUpdate },
-    ComponentRenderRequest { request: ComponentRenderRequest },
+    FatalError {
+        error: BridgeError,
+    },
+    Diagnostics {
+        diagnostics: Vec<Diagnostic>,
+    },
+    StateSnapshot {
+        state: CoreStateSnapshot,
+    },
+    PiSessionEvent {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(rename = "sessionFile")]
+        #[ts(rename = "sessionFile")]
+        session_file: Option<String>,
+        event: serde_json::Value,
+    },
+    QueueUpdate {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(rename = "sessionFile")]
+        #[ts(rename = "sessionFile")]
+        session_file: Option<String>,
+        queue: QueueSnapshot,
+    },
+    BashChunk {
+        chunk: String,
+    },
+    AuthFlowUpdate {
+        update: AuthFlowUpdate,
+    },
+    ExtensionUiRequest {
+        request: ExtensionUiRequest,
+    },
+    ExtensionUiUpdate {
+        update: ExtensionUiUpdate,
+    },
+    ComponentRenderRequest {
+        request: ComponentRenderRequest,
+    },
     Shutdown,
 }
 

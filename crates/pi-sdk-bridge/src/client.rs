@@ -3,8 +3,8 @@ use pi_bridge_types::{
     GetAuthStatusCommand, InitCommand, InstallPackageCommand, InstalledPackage, MessageCommand,
     ModelDescriptor, NewSessionCommand, OAuthLoginCommand, OAuthLoginMethod, PackageScopeCommand,
     PackageSearchResponse, PromptCommand, ProviderAuthStatus, RemoveAuthCommand,
-    RemovePackageCommand, SearchPackagesCommand, SetApiKeyCommand, SetSessionNameCommand,
-    SwitchSessionCommand,
+    RemovePackageCommand, SearchPackagesCommand, SessionStateCommand, SetApiKeyCommand,
+    SetSessionNameCommand, SwitchSessionCommand,
 };
 
 use crate::{BridgeClientError, BridgeTransport, Result};
@@ -29,12 +29,37 @@ where
     }
 
     pub async fn prompt(&self, text: impl Into<String>) -> Result<()> {
+        self.prompt_for_session(None, text).await
+    }
+
+    pub async fn prompt_for_session(
+        &self,
+        session_path: Option<String>,
+        text: impl Into<String>,
+    ) -> Result<()> {
         let command = PromptCommand {
+            session_path,
             text: text.into(),
             images: Vec::new(),
             streaming_behavior: None,
         };
         self.expect_ack(BridgeCommand::Prompt(command)).await
+    }
+
+    pub async fn session_state(
+        &self,
+        session_path: impl Into<String>,
+    ) -> Result<CoreStateSnapshot> {
+        match self
+            .transport
+            .request(BridgeCommand::GetSessionState(SessionStateCommand {
+                session_path: session_path.into(),
+            }))
+            .await?
+        {
+            BridgeResponse::State { state } => Ok(state),
+            _other => Err(BridgeClientError::UnexpectedResponse("state")),
+        }
     }
 
     pub async fn steer(&self, text: impl Into<String>) -> Result<()> {
@@ -233,7 +258,16 @@ where
     }
 
     pub async fn set_session_name(&self, name: impl Into<String>) -> Result<()> {
+        self.set_session_name_for_session(None, name).await
+    }
+
+    pub async fn set_session_name_for_session(
+        &self,
+        session_path: Option<String>,
+        name: impl Into<String>,
+    ) -> Result<()> {
         self.expect_ack(BridgeCommand::SetSessionName(SetSessionNameCommand {
+            session_path,
             name: name.into(),
         }))
         .await

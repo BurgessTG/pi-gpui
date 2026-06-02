@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -18,7 +19,7 @@ pub struct BackendSession {
     auth_updates: broadcast::Sender<AuthFlowUpdate>,
     event_updates: broadcast::Sender<BridgeEventEnvelope>,
     agent_ready: AtomicBool,
-    session_command_lock: Mutex<()>,
+    session_command_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     cwd: PathBuf,
 }
 
@@ -81,7 +82,7 @@ impl BackendSession {
             auth_updates,
             event_updates,
             agent_ready: AtomicBool::new(false),
-            session_command_lock: Mutex::new(()),
+            session_command_locks: Mutex::new(HashMap::new()),
             cwd: _cwd,
         });
         let data = BackendData {
@@ -188,7 +189,10 @@ impl BackendSession {
 
     pub fn new_session(&self) -> Result<SessionCommandResult> {
         self.ensure_agent_ready()?;
-        let _guard = self.lock_session_commands();
+        let command_lock = self.session_command_lock("__primary__");
+        let _guard = command_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let cancelled = self.runtime.block_on(self.client.new_session(None))?;
         Ok(SessionCommandResult {
             data: self.collect_data()?,
@@ -198,7 +202,10 @@ impl BackendSession {
 
     pub fn switch_session(&self, session_path: String) -> Result<SessionCommandResult> {
         self.ensure_agent_ready()?;
-        let _guard = self.lock_session_commands();
+        let command_lock = self.session_command_lock("__primary__");
+        let _guard = command_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let cancelled = self
             .runtime
             .block_on(self.client.switch_session(session_path, None))?;
@@ -210,7 +217,10 @@ impl BackendSession {
 
     pub fn fork_session(&self, entry_id: String) -> Result<SessionCommandResult> {
         self.ensure_agent_ready()?;
-        let _guard = self.lock_session_commands();
+        let command_lock = self.session_command_lock("__primary__");
+        let _guard = command_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.runtime
             .block_on(self.client.fork_session(entry_id, ForkPosition::At))?;
         Ok(SessionCommandResult {
@@ -221,22 +231,21 @@ impl BackendSession {
 
     pub fn prompt(&self, session_path: Option<String>, text: String) -> Result<BackendData> {
         self.ensure_agent_ready()?;
-        let _guard = self.lock_session_commands();
+        let lock_key = session_path.as_deref().unwrap_or("__primary__").to_owned();
+        let command_lock = self.session_command_lock(&lock_key);
+        let _guard = command_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.runtime
+            .block_on(self.client.prompt_for_session(session_path.clone(), text))?;
         if let Some(session_path) = session_path {
-            let current_path = self
+            let state = self
                 .runtime
-                .block_on(self.client.state())?
-                .session_file
-                .unwrap_or_default();
-            if current_path != session_path {
-                let cancelled = self
-                    .runtime
-                    .block_on(self.client.switch_session(session_path, None))?;
-                anyhow::ensure!(!cancelled, "Pi session switch was cancelled");
-            }
+                .block_on(self.client.session_state(session_path))?;
+            Ok(self.collect_data_with_state(state)?)
+        } else {
+            self.collect_data()
         }
-        self.runtime.block_on(self.client.prompt(text))?;
-        self.collect_data()
     }
 
     #[allow(dead_code)]
@@ -246,26 +255,34 @@ impl BackendSession {
         name: String,
     ) -> Result<BackendData> {
         self.ensure_agent_ready()?;
-        let _guard = self.lock_session_commands();
+        let lock_key = session_path.as_deref().unwrap_or("__primary__").to_owned();
+        let command_lock = self.session_command_lock(&lock_key);
+        let _guard = command_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.runtime.block_on(
+            self.client
+                .set_session_name_for_session(session_path.clone(), name),
+        )?;
         if let Some(session_path) = session_path {
-            let current_path = self
+            let state = self
                 .runtime
-                .block_on(self.client.state())?
-                .session_file
-                .unwrap_or_default();
-            if current_path != session_path {
-                self.runtime
-                    .block_on(self.client.switch_session(session_path, None))?;
-            }
+                .block_on(self.client.session_state(session_path))?;
+            Ok(self.collect_data_with_state(state)?)
+        } else {
+            self.collect_data()
         }
-        self.runtime.block_on(self.client.set_session_name(name))?;
-        self.collect_data()
     }
 
-    fn lock_session_commands(&self) -> MutexGuard<'_, ()> {
-        self.session_command_lock
+    fn session_command_lock(&self, key: &str) -> Arc<Mutex<()>> {
+        let mut locks = self
+            .session_command_locks
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        locks
+            .entry(key.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     fn ensure_agent_ready(&self) -> Result<()> {
@@ -277,21 +294,32 @@ impl BackendSession {
     }
 
     fn collect_data(&self) -> Result<BackendData> {
-        let auth = self.runtime.block_on(self.client.auth_status(None))?;
-        let packages = self
-            .runtime
-            .block_on(self.client.list_packages(self.cwd_display()))
-            .unwrap_or_default();
         let agent_ready = self.agent_ready.load(Ordering::Acquire);
         let state = if agent_ready {
             Some(self.runtime.block_on(self.client.state())?)
         } else {
             None
         };
+        self.collect_data_with_optional_state(state)
+    }
+
+    fn collect_data_with_state(&self, state: CoreStateSnapshot) -> Result<BackendData> {
+        self.collect_data_with_optional_state(Some(state))
+    }
+
+    fn collect_data_with_optional_state(
+        &self,
+        state: Option<CoreStateSnapshot>,
+    ) -> Result<BackendData> {
+        let auth = self.runtime.block_on(self.client.auth_status(None))?;
+        let packages = self
+            .runtime
+            .block_on(self.client.list_packages(self.cwd_display()))
+            .unwrap_or_default();
         Ok(BackendData {
             auth,
             packages,
-            agent_ready,
+            agent_ready: self.agent_ready.load(Ordering::Acquire),
             state,
         })
     }

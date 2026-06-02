@@ -1,34 +1,26 @@
 # Progress
 
 ## Status
-Complete locally; validated.
+Complete locally; validated end-to-end.
 
 ## Tasks Completed
-- Refactored workspace canvas, chat nodes, bottom dock, status bar/tabs, and pinned panels toward persistent GPUI `Entity` views.
-- Added safe `AnyView::cached(...)` boundaries with uncached same-frame rendering when synced props change.
-- Added transcript virtualization with stable `ChatMessageView` entities and bottom-aligned streaming scroll preservation.
-- Added Hyprland-style pinned panel rendering through chat node entities.
-- Added env-gated non-UI render tracing (`PI_WORKSPACES_RENDER_TRACE`, `PI_WORKSPACES_RENDER_TRACE_MS`).
-- Replaced fixed canvas repaint timer for interactions with frame-aligned `window.on_next_frame` scheduling.
-- Added cached drawing bounds plus a real broadphase spatial index for drawing render culling, hit testing, and erasing.
-- Filtered canvas/pinned child maps to active-workspace-local keys to avoid cloning/comparing unrelated workspaces.
-- Split canvas tests into `workspace/canvas_tests.rs` to keep core canvas code smaller.
+- Implemented targeted protocol routing for concurrent chat sessions (`sessionPath`, `getSessionState`, and session/node metadata on stream events).
+- Refactored Node runtime into an in-process multi-session runtime pool keyed by session id/path, with targeted snapshots and event emission.
+- Replaced global prompt serialization with per-session backend locks and multi-node frontend streaming state.
+- Preserved same-node prompt ordering with a local queued prompt path while allowing different nodes to stream concurrently.
+- Added bottom-right zoom-aware resize grip affordance with hover highlight and diagonal resize cursor.
+- Added dynamic minimap world bounds for distant/unbounded canvas content.
+- Added node spatial indexing, drawing broadphase culling, cached drawing path geometry, and block-level markdown view caching.
+- Preserved entity/cached GPUI rendering architecture, transcript virtualization, pinned panels, world-space zoom, animations, markdown, and env-gated render tracing.
 
 ## Validation
 - `cargo fmt --check`
-- `cargo check -p pi-desktop`
 - `cargo check --workspace --all-targets`
-- `cargo clippy -p pi-desktop --all-targets -- -D warnings`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test -p pi-desktop`
 - `cargo test --workspace`
 - `cd node && npm run typecheck`
 - `cd node && npm test`
 - `cd node && npm run check-protocol`
 - `git diff --check`
-- LSP diagnostics on touched Rust files: clean.
-
-## Remaining Optional Work
-- Manual UX smoke test for pin/unpin, pinned resize/focus, shortcuts, streaming, pan/zoom/draw/erase/text boxes, tabs, and bottom dock.
-- Measure with render trace before attempting riskier canvas-state entity/revision extraction or path geometry caching.
-- Optional backend routing for multiple active sessions.
+- LSP diagnostics on workspace: clean.
+- `timeout 6s cargo run -p pi-desktop` compiled and launched the app, then was intentionally terminated by timeout.

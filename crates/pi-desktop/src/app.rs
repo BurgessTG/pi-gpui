@@ -133,7 +133,7 @@ pub struct PiDesktop {
     chat_node_views: HashMap<(usize, usize), Entity<chat_node::ChatNodeView>>,
     chat_node_render_revision: u64,
     queued_chat_prompts: VecDeque<QueuedChatPrompt>,
-    streaming_node: Option<(usize, usize)>,
+    streaming_nodes: HashSet<(usize, usize)>,
     editing_title: Option<(usize, usize)>,
     editing_text_box: Option<(usize, usize)>,
     previous_workspace_index: Option<usize>,
@@ -298,7 +298,7 @@ impl PiDesktop {
             chat_node_views: HashMap::new(),
             chat_node_render_revision: 0,
             queued_chat_prompts: VecDeque::new(),
-            streaming_node: None,
+            streaming_nodes: HashSet::new(),
             editing_title: None,
             editing_text_box: None,
             previous_workspace_index: None,
@@ -400,9 +400,9 @@ impl PiDesktop {
         self.chat_transcripts.remove(&key);
         self.chat_body_views.remove(&key);
         self.chat_node_views.remove(&key);
-        if self.streaming_node == Some(key) {
-            self.streaming_node = None;
-        }
+        self.streaming_nodes.remove(&key);
+        self.queued_chat_prompts
+            .retain(|prompt| (prompt.workspace_id, prompt.node_id) != key);
         if self.editing_title == Some(key) {
             self.editing_title = None;
         }

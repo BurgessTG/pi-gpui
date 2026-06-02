@@ -123,6 +123,7 @@ mod tests {
         let envelope = BridgeCommandEnvelope::new(
             RequestId::from("req-1"),
             BridgeCommand::Prompt(PromptCommand {
+                session_path: None,
                 text: "hello".to_owned(),
                 images: Vec::new(),
                 streaming_behavior: None,
@@ -132,6 +133,24 @@ mod tests {
         let restored: BridgeCommandEnvelope = serde_json::from_str(&json)?;
         assert_eq!(envelope, restored);
         insta::assert_json_snapshot!(restored);
+        Ok(())
+    }
+
+    #[test]
+    fn session_event_uses_camel_case_target_fields() -> Result<(), Box<dyn std::error::Error>> {
+        let event = BridgeEventEnvelope::new(BridgeEvent::PiSessionEvent {
+            session_id: Some("sid".to_owned()),
+            session_file: Some("/tmp/session.jsonl".to_owned()),
+            event: serde_json::json!({ "type": "queue_update" }),
+        });
+        let json = serde_json::to_value(&event)?;
+        assert_eq!(json["event"]["payload"]["sessionId"], "sid");
+        assert_eq!(
+            json["event"]["payload"]["sessionFile"],
+            "/tmp/session.jsonl"
+        );
+        let restored: BridgeEventEnvelope = serde_json::from_value(json)?;
+        assert_eq!(event, restored);
         Ok(())
     }
 

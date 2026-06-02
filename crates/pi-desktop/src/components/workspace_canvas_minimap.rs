@@ -65,7 +65,7 @@ pub(crate) fn render_minimap(
             }),
         )
         .child(render_minimap_grid())
-        .children(render_minimap_node_symbols(canvas))
+        .children(render_minimap_node_symbols(canvas, canvas_size))
         .child(render_minimap_viewport(canvas, canvas_size))
         .child(render_minimap_controls(canvas.viewport(), cx))
         .into_any_element()
@@ -103,13 +103,13 @@ fn render_minimap_grid() -> AnyElement {
         .into_any_element()
 }
 
-fn render_minimap_node_symbols(canvas: &CanvasState) -> Vec<AnyElement> {
+fn render_minimap_node_symbols(canvas: &CanvasState, canvas_size: WorldSize) -> Vec<AnyElement> {
     let minimap_size = WorldSize::new(MINIMAP_WIDTH, MINIMAP_HEIGHT);
     canvas
         .nodes()
         .iter()
         .map(|node| {
-            let position = canvas.node_minimap_position(node.position(), minimap_size);
+            let position = canvas.node_minimap_position(node.position(), minimap_size, canvas_size);
             div()
                 .absolute()
                 .left(px(position.x - 5.0))

@@ -2,6 +2,7 @@ pub(super) const MINIMAP_WORLD_WIDTH: f32 = 4_000.0;
 pub(super) const MINIMAP_WORLD_HEIGHT: f32 = 2_600.0;
 pub(super) const MINIMAP_WORLD_LEFT: f32 = -2_000.0;
 pub(super) const MINIMAP_WORLD_TOP: f32 = -1_300.0;
+pub(super) const MINIMAP_WORLD_PADDING: f32 = 320.0;
 pub(super) const SNAP_GRID_SIZE: f32 = 28.0;
 pub(super) const DRAWING_ERASE_RADIUS: f32 = 18.0;
 pub(super) const DRAWING_HIT_SCREEN_RADIUS: f32 = 12.0;
@@ -80,6 +81,36 @@ impl WorldSize {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct MinimapWorldBounds {
+    pub(super) left: f32,
+    pub(super) top: f32,
+    pub(super) width: f32,
+    pub(super) height: f32,
+}
+
+impl Default for MinimapWorldBounds {
+    fn default() -> Self {
+        Self {
+            left: MINIMAP_WORLD_LEFT,
+            top: MINIMAP_WORLD_TOP,
+            width: MINIMAP_WORLD_WIDTH,
+            height: MINIMAP_WORLD_HEIGHT,
+        }
+    }
+}
+
+impl MinimapWorldBounds {
+    pub(super) fn from_edges(left: f32, top: f32, right: f32, bottom: f32) -> Self {
+        Self {
+            left,
+            top,
+            width: (right - left).max(1.0),
+            height: (bottom - top).max(1.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MinimapRect {
     pub left: f32,
     pub top: f32,
@@ -101,6 +132,7 @@ pub(super) struct MinimapPanDrag {
     pub(super) start_local: WorldPoint,
     pub(super) start_pan_x: f32,
     pub(super) start_pan_y: f32,
+    pub(super) world_bounds: MinimapWorldBounds,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,18 +142,30 @@ pub struct CanvasViewport {
     pub zoom: f32,
 }
 
-pub(super) fn world_to_minimap_x(world_x: f32, minimap_size: WorldSize) -> f32 {
-    (world_x - MINIMAP_WORLD_LEFT) / MINIMAP_WORLD_WIDTH * minimap_size.width
+pub(super) fn world_to_minimap_x(
+    world_x: f32,
+    minimap_size: WorldSize,
+    bounds: MinimapWorldBounds,
+) -> f32 {
+    (world_x - bounds.left) / bounds.width * minimap_size.width
 }
 
-pub(super) fn world_to_minimap_y(world_y: f32, minimap_size: WorldSize) -> f32 {
-    (world_y - MINIMAP_WORLD_TOP) / MINIMAP_WORLD_HEIGHT * minimap_size.height
+pub(super) fn world_to_minimap_y(
+    world_y: f32,
+    minimap_size: WorldSize,
+    bounds: MinimapWorldBounds,
+) -> f32 {
+    (world_y - bounds.top) / bounds.height * minimap_size.height
 }
 
-pub(super) fn minimap_to_world(local_position: WorldPoint, minimap_size: WorldSize) -> WorldPoint {
+pub(super) fn minimap_to_world(
+    local_position: WorldPoint,
+    minimap_size: WorldSize,
+    bounds: MinimapWorldBounds,
+) -> WorldPoint {
     WorldPoint::new(
-        MINIMAP_WORLD_LEFT + local_position.x / minimap_size.width * MINIMAP_WORLD_WIDTH,
-        MINIMAP_WORLD_TOP + local_position.y / minimap_size.height * MINIMAP_WORLD_HEIGHT,
+        bounds.left + local_position.x / minimap_size.width * bounds.width,
+        bounds.top + local_position.y / minimap_size.height * bounds.height,
     )
 }
 

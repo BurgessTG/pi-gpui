@@ -114,6 +114,7 @@ async fn embedded_node_runs_pi_sdk_with_faux_provider() -> Result<(), Box<dyn st
     assert!(state.initialized);
     assert!(matches!(
         host.request(BridgeCommand::Prompt(PromptCommand {
+            session_path: None,
             text: "Say hello".to_owned(),
             images: Vec::new(),
             streaming_behavior: None,
@@ -257,6 +258,7 @@ async fn embedded_backend_handles_core_commands() -> Result<(), Box<dyn std::err
 
     assert!(matches!(
         host.request(BridgeCommand::SetSessionName(SetSessionNameCommand {
+            session_path: None,
             name: "backend-test".to_owned(),
         }))
         .await?,
@@ -338,6 +340,7 @@ async fn embedded_backend_handles_core_commands() -> Result<(), Box<dyn std::err
 
     assert!(matches!(
         host.request(BridgeCommand::Prompt(PromptCommand {
+            session_path: None,
             text: "Create exportable content".to_owned(),
             images: Vec::new(),
             streaming_behavior: None,
@@ -409,6 +412,7 @@ async fn embedded_backend_handles_session_lifecycle() -> Result<(), Box<dyn std:
     host.wait_until_ready().await?;
     init_host(&host, &temp, false).await?;
     host.request(BridgeCommand::Prompt(PromptCommand {
+        session_path: None,
         text: "Create a session tree".to_owned(),
         images: Vec::new(),
         streaming_behavior: None,
@@ -787,6 +791,7 @@ async fn embedded_backend_can_use_real_provider_when_configured()
     let expected = std::env::var("PI_GPUI_REAL_EXPECT")
         .unwrap_or_else(|_missing| "pi-gpui-real-provider-ok".to_owned());
     host.request(BridgeCommand::Prompt(PromptCommand {
+        session_path: None,
         text: std::env::var("PI_GPUI_REAL_PROMPT")
             .unwrap_or_else(|_missing| format!("Reply with exactly: {expected}")),
         images: Vec::new(),

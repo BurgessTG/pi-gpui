@@ -2,7 +2,7 @@ use super::*;
 
 impl PiDesktop {
     pub(super) fn chat_node_working(&self, key: (usize, usize)) -> bool {
-        self.streaming_node == Some(key)
+        self.streaming_nodes.contains(&key)
             || self
                 .queued_chat_prompts
                 .iter()
@@ -60,7 +60,7 @@ impl PiDesktop {
             cx.notify();
             return;
         };
-        if self.streaming_node.is_none() && self.pending {
+        if self.pending {
             self.status = "Pi is busy; wait for the current operation to finish.".into();
             cx.notify();
             return;
@@ -73,10 +73,10 @@ impl PiDesktop {
             session_path,
             text,
         };
-        if self.streaming_node.is_some() {
+        if self.streaming_nodes.contains(&key) {
             self.queued_chat_prompts.push_back(prompt);
             self.status =
-                format!("Queued chat node #{node_id} behind the active Pi stream.").into();
+                format!("Queued chat node #{node_id} behind its active Pi stream.").into();
             cx.notify();
             return;
         }
@@ -94,8 +94,7 @@ impl PiDesktop {
         self.update_chat_transcript(key, cx, |transcript| {
             transcript.push_user_message(prompt.text.clone());
         });
-        self.streaming_node = Some(key);
-        self.pending = true;
+        self.streaming_nodes.insert(key);
         self.status = format!("Sending chat node #{} to Pi…", prompt.node_id).into();
         cx.notify();
 
@@ -124,12 +123,9 @@ impl PiDesktop {
         cx: &mut Context<Self>,
     ) {
         let key = (prompt.workspace_id, prompt.node_id);
-        self.pending = false;
         let Some(workspace_index) = self.workspace_index_for_id(prompt.workspace_id) else {
             self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
-            if self.streaming_node == Some(key) {
-                self.streaming_node = None;
-            }
+            self.streaming_nodes.remove(&key);
             self.status = "Pi chat response arrived after its workspace was closed.".into();
             return;
         };
@@ -138,9 +134,7 @@ impl PiDesktop {
             .is_none()
         {
             self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
-            if self.streaming_node == Some(key) {
-                self.streaming_node = None;
-            }
+            self.streaming_nodes.remove(&key);
             self.status = "Pi chat response arrived after its node was closed.".into();
             return;
         }
@@ -157,9 +151,7 @@ impl PiDesktop {
                     metadata,
                 );
                 self.update_chat_transcript(key, cx, ChatTranscript::mark_idle);
-                if self.streaming_node == Some(key) {
-                    self.streaming_node = None;
-                }
+                self.streaming_nodes.remove(&key);
                 self.apply_data(data, "Pi chat response complete.", cx);
             }
             Err(error) => {
@@ -167,22 +159,24 @@ impl PiDesktop {
                 self.update_chat_transcript(key, cx, |transcript| {
                     transcript.mark_error(message.clone());
                 });
-                if self.streaming_node == Some(key) {
-                    self.streaming_node = None;
-                }
+                self.streaming_nodes.remove(&key);
                 self.status = message.into();
             }
         }
     }
 
     fn start_next_queued_chat_prompt(&mut self, cx: &mut Context<Self>) {
-        if self.streaming_node.is_some() || self.pending {
+        if self.pending {
             return;
         }
         let Some(session) = self.backend.clone() else {
             return;
         };
-        while let Some(prompt) = self.queued_chat_prompts.pop_front() {
+        let queued_count = self.queued_chat_prompts.len();
+        for _ in 0..queued_count {
+            let Some(prompt) = self.queued_chat_prompts.pop_front() else {
+                break;
+            };
             let Some(workspace_index) = self.workspace_index_for_id(prompt.workspace_id) else {
                 self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
                 continue;
@@ -194,7 +188,12 @@ impl PiDesktop {
                 self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
                 continue;
             }
-            self.start_chat_prompt(prompt, session, cx);
+            let key = (prompt.workspace_id, prompt.node_id);
+            if self.streaming_nodes.contains(&key) {
+                self.queued_chat_prompts.push_back(prompt);
+                continue;
+            }
+            self.start_chat_prompt(prompt, session.clone(), cx);
             return;
         }
     }

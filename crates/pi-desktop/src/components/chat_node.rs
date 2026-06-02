@@ -1,18 +1,20 @@
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, Context, Entity, Hsla, InteractiveElement as _,
-    IntoElement, ListAlignment, ListOffset, ListState, MouseButton, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled as _, Subscription,
-    Window, div, list, prelude::FluentBuilder as _, px, svg,
+    AnyElement, AnyView, App, AppContext as _, Context, CursorStyle, Entity, Hsla,
+    InteractiveElement as _, IntoElement, ListAlignment, ListOffset, ListState, MouseButton,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, StyleRefinement,
+    Styled as _, Subscription, Window, div, list, prelude::FluentBuilder as _, px, svg,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tag::Tag;
-use gpui_component::text::TextView;
 use gpui_component::{Sizable as _, Size, StyledExt as _, h_flex, v_flex};
 
 use crate::app::PiDesktop;
 use crate::chat::transcript::{
     AssistantStatus, ChatEntry, ChatToolRun, ChatTranscript, ToolStatus,
+};
+use crate::components::chat_markdown::{
+    MarkdownBlockView, render_markdown_blocks, sync_markdown_blocks,
 };
 use crate::components::chat_node_indicators::{LoadingBarView, WorkingInputOverlayView};
 use crate::design::theme;
@@ -28,6 +30,7 @@ pub struct ChatMessageView {
     index: usize,
     entry: ChatEntry,
     scale: f32,
+    markdown_blocks: Vec<Entity<MarkdownBlockView>>,
 }
 
 impl ChatMessageView {
@@ -37,14 +40,18 @@ impl ChatMessageView {
         index: usize,
         entry: ChatEntry,
         scale: f32,
+        cx: &mut Context<Self>,
     ) -> Self {
-        Self {
+        let mut view = Self {
             workspace_id,
             node_id,
             index,
             entry,
             scale,
-        }
+            markdown_blocks: Vec::new(),
+        };
+        view.sync_markdown_blocks(cx);
+        view
     }
 
     fn sync(&mut self, index: usize, entry: ChatEntry, scale: f32, cx: &mut Context<Self>) -> bool {
@@ -54,6 +61,7 @@ impl ChatMessageView {
         self.index = index;
         self.entry = entry;
         self.scale = scale;
+        self.sync_markdown_blocks(cx);
         cx.notify();
         true
     }
@@ -63,23 +71,32 @@ impl ChatMessageView {
             return false;
         }
         self.scale = scale;
+        self.sync_markdown_blocks(cx);
         cx.notify();
         true
+    }
+
+    fn sync_markdown_blocks(&mut self, cx: &mut Context<Self>) {
+        if let ChatEntry::Assistant { text, .. } = &self.entry {
+            sync_markdown_blocks(
+                &mut self.markdown_blocks,
+                self.workspace_id,
+                self.node_id,
+                self.index,
+                text,
+                self.scale,
+                cx,
+            );
+        } else {
+            self.markdown_blocks.clear();
+        }
     }
 }
 
 impl Render for ChatMessageView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         crate::instrumentation::record_render("ChatMessageView");
-        render_transcript_entry(
-            self.workspace_id,
-            self.node_id,
-            self.index,
-            &self.entry,
-            self.scale,
-            window,
-            &mut *cx,
-        )
+        render_transcript_entry(&self.entry, &self.markdown_blocks, self.scale)
     }
 }
 
@@ -107,7 +124,7 @@ impl ChatBodyView {
             .into_iter()
             .enumerate()
             .map(|(index, entry)| {
-                cx.new(|_| ChatMessageView::new(workspace_id, node_id, index, entry, 1.0))
+                cx.new(|cx| ChatMessageView::new(workspace_id, node_id, index, entry, 1.0, cx))
             })
             .collect();
         let transcript_subscription = cx.observe(&transcript, |this, transcript, cx| {
@@ -146,8 +163,15 @@ impl ChatBodyView {
         }
         if entries.len() > old_len {
             for (index, entry) in entries.iter().cloned().enumerate().skip(old_len) {
-                self.message_views.push(cx.new(|_| {
-                    ChatMessageView::new(self.workspace_id, self.node_id, index, entry, self.scale)
+                self.message_views.push(cx.new(|cx| {
+                    ChatMessageView::new(
+                        self.workspace_id,
+                        self.node_id,
+                        index,
+                        entry,
+                        self.scale,
+                        cx,
+                    )
                 }));
             }
             self.list_state
@@ -603,26 +627,15 @@ fn render_empty_body(scale: f32) -> AnyElement {
 }
 
 fn render_transcript_entry(
-    workspace_id: usize,
-    node_id: usize,
-    index: usize,
     entry: &ChatEntry,
+    markdown_blocks: &[Entity<MarkdownBlockView>],
     scale: f32,
-    window: &mut Window,
-    cx: &mut App,
 ) -> AnyElement {
     match entry {
         ChatEntry::User(text) => render_user_message(text, scale),
-        ChatEntry::Assistant { text, status } => render_assistant_message(
-            workspace_id,
-            node_id,
-            index,
-            text,
-            status,
-            scale,
-            window,
-            cx,
-        ),
+        ChatEntry::Assistant { status, .. } => {
+            render_assistant_message(markdown_blocks, status, scale)
+        }
         ChatEntry::Tool(tool) => render_tool_run(tool, scale),
     }
 }
@@ -651,36 +664,17 @@ fn render_user_message(text: &str, scale: f32) -> AnyElement {
         .into_any_element()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_assistant_message(
-    workspace_id: usize,
-    node_id: usize,
-    index: usize,
-    text: &str,
+    markdown_blocks: &[Entity<MarkdownBlockView>],
     status: &AssistantStatus,
     scale: f32,
-    window: &mut Window,
-    cx: &mut App,
 ) -> AnyElement {
     let detail = assistant_error_detail(status);
-    let content = if text.trim().is_empty() { "" } else { text };
 
     v_flex()
         .w_full()
         .gap(scaled_px(8.0, scale))
-        .child(
-            TextView::markdown(
-                SharedString::from(format!(
-                    "chat-node-{workspace_id}-{node_id}-assistant-{index}"
-                )),
-                content.to_owned(),
-                window,
-                cx,
-            )
-            .selectable(true)
-            .text_size(scaled_px(14.0, scale))
-            .text_color(theme::text()),
-        )
+        .child(render_markdown_blocks(markdown_blocks))
         .when_some(detail, |this, detail| {
             this.child(
                 div()
@@ -942,16 +936,16 @@ fn render_resize_handle(app: Entity<PiDesktop>, node_id: usize, scale: f32) -> A
         .absolute()
         .right_0()
         .bottom_0()
-        .w(scaled_px(22.0, scale))
-        .h(scaled_px(22.0, scale))
-        .cursor_pointer()
-        .opacity(0.0)
-        .hover(|style| style.opacity(1.0))
+        .w(scaled_px(26.0, scale))
+        .h(scaled_px(26.0, scale))
+        .cursor(CursorStyle::ResizeUpLeftDownRight)
+        .opacity(0.58)
+        .hover(|style| style.opacity(1.0).bg(theme::accent().opacity(0.10)))
         .flex()
         .items_end()
         .justify_end()
-        .pr(scaled_px(3.0, scale))
-        .pb(scaled_px(3.0, scale))
+        .pr(scaled_px(4.0, scale))
+        .pb(scaled_px(4.0, scale))
         .on_mouse_down(
             MouseButton::Left,
             app_listener(
@@ -966,14 +960,31 @@ fn render_resize_handle(app: Entity<PiDesktop>, node_id: usize, scale: f32) -> A
                 },
             ),
         )
-        .child(
-            div()
-                .w(scaled_px(10.0, scale))
-                .h(scaled_px(10.0, scale))
-                .border_r_1()
-                .border_b_1()
-                .border_color(theme::text()),
-        )
+        .child(resize_grip_dots(scale))
+        .into_any_element()
+}
+
+fn resize_grip_dots(scale: f32) -> AnyElement {
+    div()
+        .relative()
+        .w(scaled_px(14.0, scale))
+        .h(scaled_px(14.0, scale))
+        .child(resize_grip_dot(10.0, 2.0, scale))
+        .child(resize_grip_dot(6.0, 6.0, scale))
+        .child(resize_grip_dot(10.0, 6.0, scale))
+        .child(resize_grip_dot(2.0, 10.0, scale))
+        .child(resize_grip_dot(6.0, 10.0, scale))
+        .child(resize_grip_dot(10.0, 10.0, scale))
+        .into_any_element()
+}
+
+fn resize_grip_dot(left: f32, top: f32, scale: f32) -> AnyElement {
+    div()
+        .absolute()
+        .left(scaled_px(left, scale))
+        .top(scaled_px(top, scale))
+        .size(scaled_px(2.0, scale))
+        .bg(theme::text_muted())
         .into_any_element()
 }
 

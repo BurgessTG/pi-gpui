@@ -53,10 +53,15 @@ type RuntimeServices = {
 	runtime: AgentSessionRuntime;
 	ui: NativeExtensionUi;
 	unsubscribe?: () => void;
+	sessionKeys?: Set<string>;
 };
 
 export class PiRuntimeBackend {
 	private services: RuntimeServices | undefined;
+	private sessionRuntimes = new Map<string, RuntimeServices>();
+	private createRuntimeFactory: CreateAgentSessionRuntimeFactory | undefined;
+	private runtimeCwd: string | undefined;
+	private runtimeAgentDir: string | undefined;
 	private authStorage: AuthStorage | undefined;
 	private modelRegistry: ModelRegistry | undefined;
 	private authAgentDir: string | undefined;
@@ -78,17 +83,18 @@ export class PiRuntimeBackend {
 			case "reload":
 				await this.requireRuntime().runtime.session.reload();
 				return { type: "ack" };
-			case "prompt":
-				await this.requireRuntime().runtime.session.prompt(
-					command.payload.text,
-					{
-						images: mapImages(command.payload.images),
-						...(command.payload.streamingBehavior
-							? { streamingBehavior: command.payload.streamingBehavior }
-							: {}),
-					},
+			case "prompt": {
+				const target = await this.runtimeForSessionPath(
+					command.payload.sessionPath ?? undefined,
 				);
+				await target.runtime.session.prompt(command.payload.text, {
+					images: mapImages(command.payload.images),
+					...(command.payload.streamingBehavior
+						? { streamingBehavior: command.payload.streamingBehavior }
+						: {}),
+				});
 				return { type: "ack" };
+			}
 			case "steer":
 				await this.requireRuntime().runtime.session.steer(
 					command.payload.text,
@@ -135,6 +141,12 @@ export class PiRuntimeBackend {
 				};
 			case "getState":
 				return { type: "state", payload: { state: this.snapshot() } };
+			case "getSessionState": {
+				const target = await this.runtimeForSessionPath(
+					command.payload.sessionPath,
+				);
+				return { type: "state", payload: { state: this.snapshotFor(target) } };
+			}
 			case "getMessages":
 				return {
 					type: "messages",
@@ -226,10 +238,14 @@ export class PiRuntimeBackend {
 		if (!this.services) {
 			return this.emptySnapshot();
 		}
-		const session = this.services.runtime.session;
+		return this.snapshotFor(this.services);
+	}
+
+	private snapshotFor(services: RuntimeServices): CoreStateSnapshot {
+		const session = services.runtime.session;
 		return {
 			initialized: true,
-			cwd: this.services.runtime.cwd,
+			cwd: services.runtime.cwd,
 			sessionId: session.sessionId,
 			sessionFile: session.sessionFile ?? null,
 			sessionName: session.sessionName ?? null,
@@ -245,7 +261,7 @@ export class PiRuntimeBackend {
 				followUp: [...session.getFollowUpMessages()],
 			},
 			messages: session.messages.map(asJson),
-			diagnostics: this.services.runtime.diagnostics.map((diagnostic) => ({
+			diagnostics: services.runtime.diagnostics.map((diagnostic) => ({
 				level: diagnostic.type,
 				message: diagnostic.message,
 			})),
@@ -331,9 +347,13 @@ export class PiRuntimeBackend {
 						),
 					},
 				};
-			case "setSessionName":
-				runtime.session.setSessionName(command.payload.name);
+			case "setSessionName": {
+				const target = await this.runtimeForSessionPath(
+					command.payload.sessionPath ?? undefined,
+				);
+				target.runtime.session.setSessionName(command.payload.name);
 				return { type: "ack" };
+			}
 			case "getAvailableModels":
 				return { type: "models", payload: { models: this.availableModels() } };
 			case "setModel":
@@ -590,6 +610,9 @@ export class PiRuntimeBackend {
 				diagnostics: services.diagnostics,
 			};
 		};
+		this.createRuntimeFactory = createRuntime;
+		this.runtimeCwd = cwd;
+		this.runtimeAgentDir = agentDir;
 		const sessionManager = this.createSessionManager(command, piAgent);
 		const runtime = await piAgent.createAgentSessionRuntime(createRuntime, {
 			cwd,
@@ -599,21 +622,24 @@ export class PiRuntimeBackend {
 		});
 		const ui = new NativeExtensionUi();
 		this.services = { runtime, ui };
-		runtime.setRebindSession(async () => this.bindSession());
-		runtime.setBeforeSessionInvalidate(() => ui.dispose());
-		await this.bindSession();
+		this.configureRuntimeServices(this.services);
+		await this.bindSession(this.services);
 		this.emitSnapshot();
 		return { type: "state", payload: { state: this.snapshot() } };
 	}
 
-	private async bindSession(): Promise<void> {
-		const current = this.requireRuntime();
+	private async bindSession(current: RuntimeServices): Promise<void> {
 		current.unsubscribe?.();
+		this.rememberRuntime(current);
 		current.unsubscribe = current.runtime.session.subscribe((event) => {
 			emitEvent(
 				eventEnvelope({
 					type: "piSessionEvent",
-					payload: { event: asJson(event) },
+					payload: {
+						sessionId: current.runtime.session.sessionId ?? null,
+						sessionFile: current.runtime.session.sessionFile ?? null,
+						event: asJson(event),
+					},
 				}),
 			);
 			if ((event as { type?: string }).type === "queue_update") {
@@ -625,6 +651,8 @@ export class PiRuntimeBackend {
 					eventEnvelope({
 						type: "queueUpdate",
 						payload: {
+							sessionId: current.runtime.session.sessionId ?? null,
+							sessionFile: current.runtime.session.sessionFile ?? null,
 							queue: {
 								steering: queueEvent.steering,
 								followUp: queueEvent.followUp,
@@ -651,6 +679,61 @@ export class PiRuntimeBackend {
 				},
 			});
 		}
+	}
+
+	private configureRuntimeServices(services: RuntimeServices): void {
+		services.runtime.setRebindSession(async () => this.bindSession(services));
+		services.runtime.setBeforeSessionInvalidate(() => services.ui.dispose());
+		this.rememberRuntime(services);
+	}
+
+	private rememberRuntime(services: RuntimeServices): void {
+		for (const key of services.sessionKeys ?? []) {
+			if (this.sessionRuntimes.get(key) === services) {
+				this.sessionRuntimes.delete(key);
+			}
+		}
+		const keys = new Set<string>();
+		const sessionFile = services.runtime.session.sessionFile;
+		const sessionId = services.runtime.session.sessionId;
+		if (sessionFile) keys.add(sessionFile);
+		if (sessionId) keys.add(sessionId);
+		for (const key of keys) this.sessionRuntimes.set(key, services);
+		services.sessionKeys = keys;
+	}
+
+	private async runtimeForSessionPath(
+		sessionPath?: string,
+	): Promise<RuntimeServices> {
+		if (!sessionPath) return this.requireRuntime();
+		const existing = this.sessionRuntimes.get(sessionPath);
+		if (existing) return existing;
+
+		const createRuntime = this.createRuntimeFactory;
+		const cwd = this.runtimeCwd;
+		const agentDir = this.runtimeAgentDir;
+		if (!createRuntime || !cwd || !agentDir) {
+			throw new BridgeCommandError(
+				"notInitialized",
+				"Pi runtime has not been initialized",
+			);
+		}
+		const piAgent = await loadPiAgentRuntime();
+		const sessionManager = piAgent.SessionManager.open(
+			sessionPath,
+			undefined,
+			cwd,
+		);
+		const runtime = await piAgent.createAgentSessionRuntime(createRuntime, {
+			cwd,
+			agentDir,
+			sessionManager,
+			sessionStartEvent: { type: "session_start", reason: "resume" },
+		});
+		const services = { runtime, ui: new NativeExtensionUi() };
+		this.configureRuntimeServices(services);
+		await this.bindSession(services);
+		return services;
 	}
 
 	private createSessionManager(
@@ -974,11 +1057,19 @@ export class PiRuntimeBackend {
 			clearTimeout(this.snapshotTimer);
 			this.snapshotTimer = undefined;
 		}
-		this.services?.unsubscribe?.();
-		this.services?.ui.dispose();
-		await this.services?.runtime.dispose();
+		const uniqueServices = new Set(this.sessionRuntimes.values());
+		if (this.services) uniqueServices.add(this.services);
+		for (const services of uniqueServices) {
+			services.unsubscribe?.();
+			services.ui.dispose();
+			await services.runtime.dispose();
+		}
+		this.sessionRuntimes.clear();
 		this.faux?.unregister();
 		this.services = undefined;
+		this.createRuntimeFactory = undefined;
+		this.runtimeCwd = undefined;
+		this.runtimeAgentDir = undefined;
 		this.faux = undefined;
 		this.selectedModel = undefined;
 	}

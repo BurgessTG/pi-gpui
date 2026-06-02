@@ -2,4 +2,4 @@
 import type { ImageAttachment } from "./ImageAttachment";
 import type { StreamingBehavior } from "./StreamingBehavior";
 
-export type PromptCommand = { text: string, images: Array<ImageAttachment>, streamingBehavior: StreamingBehavior | null, };
+export type PromptCommand = { sessionPath: string | null, text: string, images: Array<ImageAttachment>, streamingBehavior: StreamingBehavior | null, };

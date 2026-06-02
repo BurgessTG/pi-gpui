@@ -1,6 +1,7 @@
 pub mod auth_settings;
 pub mod bottom_dock;
 pub mod button;
+mod chat_markdown;
 pub mod chat_node;
 mod chat_node_indicators;
 pub mod file_picker;

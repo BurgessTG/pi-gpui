@@ -19,6 +19,7 @@ pub enum BridgeCommand {
     Abort,
     ClearQueue,
     GetState,
+    GetSessionState(SessionStateCommand),
     GetMessages,
     GetSessionStats,
     GetAuthStatus(GetAuthStatusCommand),
@@ -165,6 +166,7 @@ pub struct RemovePackageCommand {
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptCommand {
+    pub session_path: Option<String>,
     pub text: String,
     pub images: Vec<ImageAttachment>,
     pub streaming_behavior: Option<StreamingBehavior>,
@@ -225,6 +227,13 @@ pub struct SwitchSessionCommand {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionStateCommand {
+    pub session_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
 pub struct ForkCommand {
     pub entry_id: String,
     pub position: ForkPosition,
@@ -268,6 +277,7 @@ pub struct ExportCommand {
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct SetSessionNameCommand {
+    pub session_path: Option<String>,
     pub name: String,
 }
 
