@@ -1,12 +1,7 @@
 use std::collections::HashMap;
 
-use gpui::{
-    div, px, AnyElement, Context, Entity, IntoElement as _, ParentElement as _, Styled as _, Window,
-};
-use gpui_component::input::InputState;
-use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable, ResizableState};
-
-use crate::app::PiDesktop;
+use gpui::{AnyElement, Entity, IntoElement as _, ParentElement as _, Styled as _, div, px};
+use gpui_component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 
 use crate::components::chat_node;
 use crate::design::theme;
@@ -16,45 +11,14 @@ use crate::workspace::state::WorkspaceTab;
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pinned_panel_region(
     tab: &WorkspaceTab,
-    workspace_id: usize,
-    working_node: Option<(usize, usize)>,
     pin_panel_state: Entity<ResizableState>,
-    chat_inputs: &HashMap<(usize, usize), Entity<InputState>>,
-    title_inputs: &HashMap<(usize, usize), Entity<InputState>>,
-    chat_body_views: &HashMap<(usize, usize), Entity<chat_node::ChatBodyView>>,
-    editing_title: Option<(usize, usize)>,
-    window: &mut Window,
-    cx: &mut Context<PiDesktop>,
+    chat_node_views: &HashMap<usize, Entity<chat_node::ChatNodeView>>,
 ) -> AnyElement {
     let layout = tab.pinned_layout();
-    let focused_node_id = layout.focused_node_id();
     let panels = layout.panels().iter().filter_map(|panel| {
         let node_id = panel.node_id();
-        let node = tab
-            .canvas()
-            .nodes()
-            .iter()
-            .find(|node| node.id() == node_id)?;
-        let key = (workspace_id, node_id);
-        let input = chat_inputs.get(&key)?.clone();
-        let title_input = title_inputs.get(&key)?.clone();
-        let body_view = chat_body_views.get(&key)?.clone();
-        Some(
-            resizable_panel()
-                .size(px(360.0))
-                .child(chat_node::pinned_chat_node_panel(
-                    workspace_id,
-                    node,
-                    working_node == Some(key),
-                    input,
-                    title_input,
-                    body_view,
-                    editing_title == Some(key),
-                    focused_node_id == Some(node_id),
-                    window,
-                    cx,
-                )),
-        )
+        let node_view = chat_node_views.get(&node_id)?.clone();
+        Some(resizable_panel().size(px(360.0)).child(node_view))
     });
 
     let group = match layout.axis() {

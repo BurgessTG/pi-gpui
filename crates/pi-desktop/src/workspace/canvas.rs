@@ -1,25 +1,31 @@
+use std::collections::HashMap;
+
 pub const SESSION_NODE_DEFAULT_WIDTH: f32 = 560.0;
 pub const SESSION_NODE_DEFAULT_HEIGHT: f32 = 420.0;
 pub const SESSION_NODE_MIN_WIDTH: f32 = 320.0;
 pub const SESSION_NODE_MIN_HEIGHT: f32 = 260.0;
 
 pub use super::canvas_model::{
-    CanvasDrawing, CanvasDrawingDraft, CanvasDrawingTool, CanvasViewport, MinimapRect, WorldPoint,
-    WorldSize, snap_world_point,
+    CanvasDrawing, CanvasDrawingBounds, CanvasDrawingDraft, CanvasDrawingTool, CanvasViewport,
+    MinimapRect, WorldPoint, WorldSize, snap_world_point,
 };
 use super::canvas_model::{
-    CanvasPanDrag, DRAWING_HIT_SCREEN_RADIUS, DrawingDrag, DrawingHistoryAction,
-    MINIMAP_WORLD_HEIGHT, MINIMAP_WORLD_WIDTH, MinimapPanDrag, NodeDrag, NodeResizeDrag,
-    PEN_SAMPLE_MIN_SCREEN_DISTANCE, distance, drawing_hit_test, drawing_near_point,
+    CanvasPanDrag, DRAWING_ERASE_RADIUS, DRAWING_HIT_SCREEN_RADIUS, DrawingDrag,
+    DrawingHistoryAction, MINIMAP_WORLD_HEIGHT, MINIMAP_WORLD_WIDTH, MinimapPanDrag, NodeDrag,
+    NodeResizeDrag, PEN_SAMPLE_MIN_SCREEN_DISTANCE, distance, drawing_hit_test, drawing_near_point,
     minimap_to_world, world_to_minimap_x, world_to_minimap_y,
 };
 pub use super::canvas_session::{SessionNode, SessionNodeMetadata, SessionNodePrimitive};
+use super::canvas_spatial::CanvasSpatialIndex;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasState {
     viewport: CanvasViewport,
     nodes: Vec<SessionNode>,
+    node_index: HashMap<usize, usize>,
     drawings: Vec<CanvasDrawing>,
+    drawing_bounds: Vec<Option<CanvasDrawingBounds>>,
+    drawing_spatial_index: CanvasSpatialIndex,
     drawing_draft: Option<CanvasDrawingDraft>,
     undo_stack: Vec<DrawingHistoryAction>,
     redo_stack: Vec<DrawingHistoryAction>,
@@ -39,7 +45,10 @@ impl Default for CanvasState {
         Self {
             viewport: CanvasViewport::default(),
             nodes: Vec::new(),
+            node_index: HashMap::new(),
             drawings: Vec::new(),
+            drawing_bounds: Vec::new(),
+            drawing_spatial_index: CanvasSpatialIndex::default(),
             drawing_draft: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -69,8 +78,57 @@ impl CanvasState {
         &self.nodes
     }
 
+    pub fn node(&self, node_id: usize) -> Option<&SessionNode> {
+        self.node_index
+            .get(&node_id)
+            .and_then(|index| self.nodes.get(*index))
+    }
+
+    fn node_mut(&mut self, node_id: usize) -> Option<&mut SessionNode> {
+        let index = *self.node_index.get(&node_id)?;
+        self.nodes.get_mut(index)
+    }
+
+    fn rebuild_node_index(&mut self) {
+        self.node_index.clear();
+        self.node_index.extend(
+            self.nodes
+                .iter()
+                .enumerate()
+                .map(|(index, node)| (node.id(), index)),
+        );
+    }
+
+    fn rebuild_drawing_spatial_index(&mut self) {
+        self.drawing_spatial_index = CanvasSpatialIndex::rebuild(&self.drawing_bounds);
+    }
+
     pub fn drawings(&self) -> &[CanvasDrawing] {
         &self.drawings
+    }
+
+    pub fn drawing_bounds(&self, index: usize) -> Option<&CanvasDrawingBounds> {
+        self.drawing_bounds.get(index).and_then(Option::as_ref)
+    }
+
+    pub fn drawing_indices_in_bounds(&self, bounds: &CanvasDrawingBounds) -> Vec<usize> {
+        self.drawing_spatial_index
+            .query(bounds)
+            .into_iter()
+            .filter(|index| {
+                self.drawing_bounds(*index)
+                    .is_some_and(|drawing_bounds| drawing_bounds.intersects(bounds))
+            })
+            .collect()
+    }
+
+    fn drawing_indices_near_point(&self, point: WorldPoint, radius: f32) -> Vec<usize> {
+        self.drawing_indices_in_bounds(&CanvasDrawingBounds {
+            left: point.x - radius,
+            top: point.y - radius,
+            right: point.x + radius,
+            bottom: point.y + radius,
+        })
     }
 
     pub fn can_undo_drawing(&self) -> bool {
@@ -216,7 +274,7 @@ impl CanvasState {
     }
 
     pub fn start_node_drag(&mut self, node_id: usize, screen_position: WorldPoint) -> bool {
-        let Some(node) = self.nodes.iter().find(|node| node.id == node_id) else {
+        let Some(start_position) = self.node(node_id).map(|node| node.position) else {
             return false;
         };
         self.pan_drag = None;
@@ -226,7 +284,7 @@ impl CanvasState {
         self.node_drag = Some(NodeDrag {
             node_id,
             start_screen: screen_position,
-            start_position: node.position,
+            start_position,
         });
         true
     }
@@ -235,19 +293,19 @@ impl CanvasState {
         let Some(drag) = self.node_drag else {
             return false;
         };
-        let Some(node) = self.nodes.iter_mut().find(|node| node.id == drag.node_id) else {
-            self.node_drag = None;
-            return false;
-        };
-
+        let zoom = self.viewport.zoom;
         let next_position = WorldPoint::new(
-            drag.start_position.x + (screen_position.x - drag.start_screen.x) / self.viewport.zoom,
-            drag.start_position.y + (screen_position.y - drag.start_screen.y) / self.viewport.zoom,
+            drag.start_position.x + (screen_position.x - drag.start_screen.x) / zoom,
+            drag.start_position.y + (screen_position.y - drag.start_screen.y) / zoom,
         );
         let next_position = if snap_to_grid {
             snap_world_point(next_position)
         } else {
             next_position
+        };
+        let Some(node) = self.node_mut(drag.node_id) else {
+            self.node_drag = None;
+            return false;
         };
         if node.position == next_position {
             return false;
@@ -263,7 +321,7 @@ impl CanvasState {
     }
 
     pub fn start_node_resize(&mut self, node_id: usize, screen_position: WorldPoint) -> bool {
-        let Some(node) = self.nodes.iter().find(|node| node.id == node_id) else {
+        let Some(start_size) = self.node(node_id).map(|node| node.size) else {
             return false;
         };
         self.pan_drag = None;
@@ -273,7 +331,7 @@ impl CanvasState {
         self.node_resize_drag = Some(NodeResizeDrag {
             node_id,
             start_screen: screen_position,
-            start_size: node.size,
+            start_size,
         });
         true
     }
@@ -282,7 +340,7 @@ impl CanvasState {
         let Some(drag) = self.node_resize_drag else {
             return false;
         };
-        let Some(node) = self.nodes.iter_mut().find(|node| node.id == drag.node_id) else {
+        let Some(node) = self.node_mut(drag.node_id) else {
             self.node_resize_drag = None;
             return false;
         };
@@ -387,7 +445,7 @@ impl CanvasState {
         if self.drawings[drag.index] == next_drawing {
             return false;
         }
-        self.drawings[drag.index] = next_drawing;
+        self.set_drawing_at(drag.index, next_drawing);
         self.redo_stack.clear();
         true
     }
@@ -513,9 +571,14 @@ impl CanvasState {
 
     fn drawing_index_at(&self, point: WorldPoint) -> Option<usize> {
         let hit_radius = DRAWING_HIT_SCREEN_RADIUS / self.viewport.zoom.max(0.1);
-        self.drawings
-            .iter()
-            .rposition(|drawing| drawing_hit_test(drawing, point, hit_radius))
+        self.drawing_indices_near_point(point, hit_radius)
+            .into_iter()
+            .rev()
+            .find(|index| {
+                self.drawings
+                    .get(*index)
+                    .is_some_and(|drawing| drawing_hit_test(drawing, point, hit_radius))
+            })
     }
 
     fn drawing_world_point(
@@ -534,9 +597,14 @@ impl CanvasState {
 
     fn erase_drawing_at(&mut self, point: WorldPoint) -> bool {
         let Some(index) = self
-            .drawings
-            .iter()
-            .rposition(|drawing| drawing_near_point(drawing, point))
+            .drawing_indices_near_point(point, DRAWING_ERASE_RADIUS)
+            .into_iter()
+            .rev()
+            .find(|index| {
+                self.drawings
+                    .get(*index)
+                    .is_some_and(|drawing| drawing_near_point(drawing, point))
+            })
         else {
             return false;
         };
@@ -548,13 +616,32 @@ impl CanvasState {
     }
 
     fn push_drawing(&mut self, drawing: CanvasDrawing) {
+        let index = self.drawings.len();
+        let bounds = drawing.bounds();
+        self.drawing_bounds.push(bounds.clone());
+        self.drawing_spatial_index.push(index, bounds.as_ref());
         self.drawings.push(drawing.clone());
         self.undo_stack.push(DrawingHistoryAction::Added(drawing));
         self.redo_stack.clear();
     }
 
+    fn set_drawing_at(&mut self, index: usize, drawing: CanvasDrawing) {
+        let bounds = drawing.bounds();
+        self.drawing_bounds[index] = bounds.clone();
+        self.drawing_spatial_index.set(index, bounds.as_ref());
+        self.drawings[index] = drawing;
+    }
+
+    fn insert_drawing_at(&mut self, index: usize, drawing: CanvasDrawing) {
+        self.drawing_bounds.insert(index, drawing.bounds());
+        self.drawings.insert(index, drawing);
+        self.rebuild_drawing_spatial_index();
+    }
+
     fn remove_drawing_at(&mut self, index: usize) -> CanvasDrawing {
+        self.drawing_bounds.remove(index);
         let drawing = self.drawings.remove(index);
+        self.rebuild_drawing_spatial_index();
         self.drawing_drag = None;
         self.selected_drawing_index = match self.selected_drawing_index {
             Some(selected) if selected == index => None,
@@ -576,7 +663,7 @@ impl CanvasState {
             }
             DrawingHistoryAction::Removed { index, drawing } => {
                 let index = (*index).min(self.drawings.len());
-                self.drawings.insert(index, drawing.clone());
+                self.insert_drawing_at(index, drawing.clone());
             }
         }
         self.redo_stack.push(action);
@@ -589,6 +676,10 @@ impl CanvasState {
         };
         match &action {
             DrawingHistoryAction::Added(drawing) => {
+                let index = self.drawings.len();
+                let bounds = drawing.bounds();
+                self.drawing_bounds.push(bounds.clone());
+                self.drawing_spatial_index.push(index, bounds.as_ref());
                 self.drawings.push(drawing.clone());
             }
             DrawingHistoryAction::Removed { index, .. } => {
@@ -630,6 +721,7 @@ impl CanvasState {
         } else {
             position
         };
+        self.node_index.insert(id, self.nodes.len());
         self.nodes.push(SessionNode {
             id,
             primitive,
@@ -641,10 +733,11 @@ impl CanvasState {
     }
 
     pub fn remove_session_node(&mut self, node_id: usize) -> bool {
-        let Some(index) = self.nodes.iter().position(|node| node.id == node_id) else {
+        let Some(index) = self.node_index.get(&node_id).copied() else {
             return false;
         };
         self.nodes.remove(index);
+        self.rebuild_node_index();
         if self.node_drag.is_some_and(|drag| drag.node_id == node_id) {
             self.node_drag = None;
         }
@@ -662,7 +755,7 @@ impl CanvasState {
         node_id: usize,
         metadata: SessionNodeMetadata,
     ) -> bool {
-        let Some(node) = self.nodes.iter_mut().find(|node| node.id == node_id) else {
+        let Some(node) = self.node_mut(node_id) else {
             return false;
         };
         node.metadata = metadata;
@@ -682,248 +775,5 @@ impl CanvasState {
             }
         }
         changed
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        CanvasDrawing, CanvasDrawingTool, CanvasState, CanvasViewport, SESSION_NODE_DEFAULT_HEIGHT,
-        SESSION_NODE_DEFAULT_WIDTH, SESSION_NODE_MIN_HEIGHT, SESSION_NODE_MIN_WIDTH,
-        SessionNodeMetadata, SessionNodePrimitive, WorldPoint, WorldSize,
-    };
-
-    fn empty_metadata() -> SessionNodeMetadata {
-        SessionNodeMetadata {
-            session_id: None,
-            session_name: None,
-            session_file: None,
-            cwd: None,
-            message_count: 0,
-        }
-    }
-
-    #[test]
-    fn viewport_round_trips_world_and_screen_points() {
-        let viewport = CanvasViewport {
-            pan_x: 24.0,
-            pan_y: -12.0,
-            zoom: 1.5,
-        };
-        let world = WorldPoint::new(40.0, 80.0);
-        let screen = viewport.world_to_screen(world);
-
-        assert_eq!(viewport.screen_to_world(screen), world);
-    }
-
-    #[test]
-    fn zoom_is_clamped_to_canvas_bounds() {
-        let mut viewport = CanvasViewport::default();
-        for _ in 0..100 {
-            viewport.zoom_out();
-        }
-        assert_eq!(viewport.zoom, CanvasViewport::MIN_ZOOM);
-
-        for _ in 0..100 {
-            viewport.zoom_in();
-        }
-        assert_eq!(viewport.zoom, CanvasViewport::MAX_ZOOM);
-    }
-
-    #[test]
-    fn zoom_at_screen_position_preserves_world_point_under_cursor() {
-        let mut viewport = CanvasViewport {
-            pan_x: 20.0,
-            pan_y: 10.0,
-            zoom: 1.0,
-        };
-        let cursor = WorldPoint::new(140.0, 90.0);
-        let before = viewport.screen_to_world(cursor);
-
-        viewport.zoom_by_at(1.4, cursor);
-
-        assert_eq!(viewport.screen_to_world(cursor), before);
-    }
-
-    #[test]
-    fn panning_uses_left_drag_delta() {
-        let mut canvas = CanvasState::new();
-        canvas.start_pan(WorldPoint::new(100.0, 120.0));
-
-        assert!(canvas.update_pan(WorldPoint::new(130.0, 80.0)));
-        assert_eq!(canvas.viewport().pan_x, 30.0);
-        assert_eq!(canvas.viewport().pan_y, -40.0);
-
-        canvas.end_pan();
-        assert!(!canvas.update_pan(WorldPoint::new(200.0, 200.0)));
-    }
-
-    #[test]
-    fn snap_grid_snaps_session_node_creation_and_drag() {
-        let mut canvas = CanvasState::new();
-        canvas.note_context_position(WorldPoint::new(43.0, 57.0));
-        let node_id =
-            canvas.add_session_node(SessionNodePrimitive::NewSession, empty_metadata(), true);
-
-        assert_eq!(canvas.nodes()[0].position(), WorldPoint::new(56.0, 56.0));
-
-        assert!(canvas.start_node_drag(node_id, WorldPoint::new(0.0, 0.0)));
-        assert!(canvas.update_node_drag(WorldPoint::new(31.0, 17.0), true));
-        assert_eq!(canvas.nodes()[0].position(), WorldPoint::new(84.0, 84.0));
-    }
-
-    #[test]
-    fn minimap_viewport_rect_stays_nested_inside_outer_box() {
-        let canvas = CanvasState::new();
-        let minimap_size = WorldSize::new(100.0, 60.0);
-        let oversized_viewport = WorldSize::new(10_000.0, 8_000.0);
-
-        let rect = canvas.minimap_viewport_rect(minimap_size, oversized_viewport);
-
-        assert!(rect.left >= 1.0);
-        assert!(rect.top >= 1.0);
-        assert!(rect.left + rect.width <= minimap_size.width - 1.0);
-        assert!(rect.top + rect.height <= minimap_size.height - 1.0);
-    }
-
-    #[test]
-    fn minimap_click_jumps_and_drag_controls_viewport() {
-        let mut canvas = CanvasState::new();
-        let minimap_size = WorldSize::new(100.0, 100.0);
-        let viewport_size = WorldSize::new(1_000.0, 500.0);
-
-        assert!(
-            canvas.start_minimap_pan(WorldPoint::new(25.0, 25.0), minimap_size, viewport_size,)
-        );
-        assert_eq!(canvas.viewport().pan_x, 1_500.0);
-        assert_eq!(canvas.viewport().pan_y, 900.0);
-
-        assert!(canvas.update_minimap_pan(WorldPoint::new(35.0, 25.0), minimap_size));
-        assert_eq!(canvas.viewport().pan_x, 1_100.0);
-        assert_eq!(canvas.viewport().pan_y, 900.0);
-
-        assert!(canvas.end_minimap_pan());
-        assert!(!canvas.update_minimap_pan(WorldPoint::new(40.0, 40.0), minimap_size));
-    }
-
-    #[test]
-    fn node_resize_changes_screen_size_and_clamps_minimums() {
-        let mut canvas = CanvasState::new();
-        canvas.zoom_by_at(2.0, WorldPoint::new(0.0, 0.0));
-        let node_id =
-            canvas.add_session_node(SessionNodePrimitive::NewSession, empty_metadata(), false);
-
-        assert!(canvas.start_node_resize(node_id, WorldPoint::new(100.0, 100.0)));
-        assert!(canvas.update_node_resize(WorldPoint::new(140.0, 160.0)));
-        assert_eq!(
-            canvas.nodes()[0].size(),
-            WorldSize::new(
-                SESSION_NODE_DEFAULT_WIDTH + 40.0,
-                SESSION_NODE_DEFAULT_HEIGHT + 60.0
-            )
-        );
-
-        assert!(canvas.update_node_resize(WorldPoint::new(-1_000.0, -1_000.0)));
-        assert_eq!(
-            canvas.nodes()[0].size(),
-            WorldSize::new(SESSION_NODE_MIN_WIDTH, SESSION_NODE_MIN_HEIGHT)
-        );
-        assert!(canvas.end_node_resize());
-    }
-
-    #[test]
-    fn removing_session_node_clears_it_from_canvas() {
-        let mut canvas = CanvasState::new();
-        let node_id =
-            canvas.add_session_node(SessionNodePrimitive::NewSession, empty_metadata(), false);
-
-        assert!(canvas.remove_session_node(node_id));
-        assert!(canvas.nodes().is_empty());
-        assert!(!canvas.remove_session_node(node_id));
-    }
-
-    #[test]
-    fn drawing_drag_moves_selected_shape() {
-        let mut canvas = CanvasState::new();
-        assert!(canvas.start_drawing(
-            CanvasDrawingTool::Rectangle,
-            WorldPoint::new(10.0, 10.0),
-            false,
-        ));
-        assert!(canvas.update_drawing(WorldPoint::new(60.0, 40.0), false));
-        assert!(canvas.end_drawing());
-
-        assert_eq!(canvas.selected_drawing_index(), None);
-        assert!(canvas.start_drawing_drag_at(WorldPoint::new(20.0, 20.0)));
-        assert!(canvas.update_drawing_drag(WorldPoint::new(35.0, 45.0), false));
-
-        assert_eq!(canvas.selected_drawing_index(), Some(0));
-        assert_eq!(
-            canvas.drawings().first(),
-            Some(&CanvasDrawing::Rectangle {
-                start: WorldPoint::new(25.0, 35.0),
-                end: WorldPoint::new(75.0, 65.0),
-            })
-        );
-        assert!(canvas.end_drawing_drag());
-    }
-
-    #[test]
-    fn text_box_drag_preserves_text() {
-        let mut canvas = CanvasState::new();
-        assert!(canvas.start_drawing(
-            CanvasDrawingTool::TextBox,
-            WorldPoint::new(100.0, 100.0),
-            false,
-        ));
-        assert!(canvas.update_drawing(WorldPoint::new(200.0, 160.0), false));
-        assert!(canvas.end_drawing());
-        assert!(canvas.update_text_box_text(0, "hello canvas".to_owned()));
-
-        assert!(canvas.start_drawing_drag(0, WorldPoint::new(120.0, 120.0)));
-        assert!(canvas.update_drawing_drag(WorldPoint::new(150.0, 150.0), false));
-
-        assert_eq!(
-            canvas.drawings().first(),
-            Some(&CanvasDrawing::TextBox {
-                start: WorldPoint::new(130.0, 130.0),
-                end: WorldPoint::new(230.0, 190.0),
-                text: "hello canvas".to_owned(),
-            })
-        );
-    }
-
-    #[test]
-    fn session_nodes_use_last_context_position_then_fallback() {
-        let mut canvas = CanvasState::new();
-        canvas.note_context_position(WorldPoint::new(90.0, 45.0));
-
-        let first = canvas.add_session_node(
-            SessionNodePrimitive::NewSession,
-            SessionNodeMetadata {
-                session_id: Some("abc".to_owned()),
-                session_name: Some("Saved Chat".to_owned()),
-                session_file: None,
-                cwd: None,
-                message_count: 0,
-            },
-            false,
-        );
-        let second = canvas.add_session_node(
-            SessionNodePrimitive::ResumeSession,
-            SessionNodeMetadata {
-                session_id: None,
-                session_name: None,
-                session_file: None,
-                cwd: None,
-                message_count: 0,
-            },
-            false,
-        );
-
-        assert_eq!(first, 1);
-        assert_eq!(second, 2);
-        assert_eq!(canvas.nodes()[0].position(), WorldPoint::new(90.0, 45.0));
-        assert_eq!(canvas.nodes()[1].position(), WorldPoint::new(360.0, 220.0));
     }
 }

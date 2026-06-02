@@ -3,6 +3,7 @@ mod backend;
 mod chat;
 mod components;
 mod design;
+mod instrumentation;
 mod ui;
 mod workspace;
 

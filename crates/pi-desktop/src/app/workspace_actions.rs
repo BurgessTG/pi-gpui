@@ -1,7 +1,7 @@
 use super::*;
 
 impl PiDesktop {
-    pub(super) fn open_landing(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn open_landing(&mut self, cx: &mut Context<Self>) {
         self.workspace_dialog = None;
         self.showing_landing = true;
         self.close_settings_drawer(cx);

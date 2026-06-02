@@ -1,9 +1,10 @@
 use gpui::{
-    div, px, AnyElement, Context, InteractiveElement as _, IntoElement as _, MouseButton,
-    MouseDownEvent, ParentElement as _, Styled as _,
+    AnyElement, Context, InteractiveElement as _, IntoElement as _, MouseButton, MouseDownEvent,
+    ParentElement as _, Styled as _, div, px,
 };
 
-use crate::app::PiDesktop;
+use crate::components::workspace_canvas::visible_world_bounds;
+use crate::components::workspace_canvas_view::WorkspaceCanvasView;
 use crate::design::theme;
 use crate::workspace::canvas::{CanvasDrawing, CanvasDrawingTool, CanvasState, WorldSize};
 use crate::workspace::pinning::PinnedLayout;
@@ -13,7 +14,7 @@ pub(super) fn render_pinned_markers(
     workspace_id: usize,
     pinned_layout: &PinnedLayout,
     canvas_size: WorldSize,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> Vec<AnyElement> {
     if pinned_layout.is_empty() {
         return Vec::new();
@@ -94,15 +95,16 @@ pub(super) fn render_number_markers(
     canvas: &CanvasState,
     active_tool: CanvasDrawingTool,
     canvas_size: WorldSize,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> Vec<AnyElement> {
     let viewport = canvas.viewport();
     let selected_index = canvas.selected_drawing_index();
+    let visible_bounds = visible_world_bounds(viewport, canvas_size, 24.0);
     canvas
-        .drawings()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, drawing)| {
+        .drawing_indices_in_bounds(&visible_bounds)
+        .into_iter()
+        .filter_map(|index| {
+            let drawing = canvas.drawings().get(index)?;
             let CanvasDrawing::NumberMarker { position, number } = drawing else {
                 return None;
             };

@@ -1,25 +1,22 @@
-use std::time::Duration;
-
 use gpui::{
-    div, prelude::FluentBuilder as _, px, svg, Animation, AnimationExt as _, AnyElement, AnyView,
-    App, AppContext as _, Context, Entity, Hsla, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled as _, Subscription, Window,
+    AnyElement, AnyView, App, AppContext as _, Context, Entity, Hsla, InteractiveElement as _,
+    IntoElement, ListAlignment, ListOffset, ListState, MouseButton, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled as _, Subscription,
+    Window, div, list, prelude::FluentBuilder as _, px, svg,
 };
-use gpui_component::animation::cubic_bezier;
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tag::Tag;
 use gpui_component::text::TextView;
-use gpui_component::{h_flex, v_flex, Sizable as _, Size, StyledExt as _};
+use gpui_component::{Sizable as _, Size, StyledExt as _, h_flex, v_flex};
 
 use crate::app::PiDesktop;
 use crate::chat::transcript::{
     AssistantStatus, ChatEntry, ChatToolRun, ChatTranscript, ToolStatus,
 };
+use crate::components::chat_node_indicators::{LoadingBarView, WorkingInputOverlayView};
 use crate::design::theme;
 use crate::ui;
-use crate::workspace::canvas::{SessionNode, WorldPoint};
 
 pub struct ChatMessageView {
     workspace_id: usize,
@@ -38,18 +35,20 @@ impl ChatMessageView {
         }
     }
 
-    fn sync(&mut self, index: usize, entry: ChatEntry, cx: &mut Context<Self>) {
+    fn sync(&mut self, index: usize, entry: ChatEntry, cx: &mut Context<Self>) -> bool {
         if self.index == index && self.entry == entry {
-            return;
+            return false;
         }
         self.index = index;
         self.entry = entry;
         cx.notify();
+        true
     }
 }
 
 impl Render for ChatMessageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::instrumentation::record_render("ChatMessageView");
         render_transcript_entry(
             self.workspace_id,
             self.node_id,
@@ -66,7 +65,7 @@ pub struct ChatBodyView {
     workspace_id: usize,
     node_id: usize,
     transcript: Entity<ChatTranscript>,
-    scroll_handle: ScrollHandle,
+    list_state: ListState,
     scroll_revision: u64,
     message_views: Vec<Entity<ChatMessageView>>,
     _transcript_subscription: Subscription,
@@ -80,6 +79,7 @@ impl ChatBodyView {
         cx: &mut Context<Self>,
     ) -> Self {
         let entries = transcript.read(cx).entries().to_vec();
+        let list_state = ListState::new(entries.len(), ListAlignment::Bottom, px(200.0));
         let message_views = entries
             .into_iter()
             .enumerate()
@@ -96,7 +96,7 @@ impl ChatBodyView {
             workspace_id,
             node_id,
             transcript,
-            scroll_handle: ScrollHandle::default(),
+            list_state,
             scroll_revision: 0,
             message_views,
             _transcript_subscription: transcript_subscription,
@@ -104,21 +104,36 @@ impl ChatBodyView {
     }
 
     fn sync_message_views(&mut self, entries: &[ChatEntry], cx: &mut Context<Self>) {
-        self.message_views.truncate(entries.len());
-        for (index, entry) in entries.iter().cloned().enumerate() {
+        let old_len = self.message_views.len();
+        let shared_len = old_len.min(entries.len());
+        for (index, entry) in entries.iter().take(shared_len).cloned().enumerate() {
             if let Some(view) = self.message_views.get(index).cloned() {
-                view.update(cx, |view, cx| view.sync(index, entry, cx));
-            } else {
+                let changed = view.update(cx, |view, cx| view.sync(index, entry, cx));
+                if changed {
+                    self.list_state.splice(index..index + 1, 1);
+                }
+            }
+        }
+        if entries.len() < old_len {
+            self.message_views.truncate(entries.len());
+            self.list_state.splice(entries.len()..old_len, 0);
+            return;
+        }
+        if entries.len() > old_len {
+            for (index, entry) in entries.iter().cloned().enumerate().skip(old_len) {
                 self.message_views.push(
                     cx.new(|_| ChatMessageView::new(self.workspace_id, self.node_id, index, entry)),
                 );
             }
+            self.list_state
+                .splice(old_len..old_len, entries.len() - old_len);
         }
     }
 }
 
 impl Render for ChatBodyView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::instrumentation::record_render("ChatBodyView");
         let transcript = self.transcript.read(cx);
         let entries_empty = transcript.entries().is_empty();
         let streaming = transcript.is_streaming();
@@ -133,151 +148,175 @@ impl Render for ChatBodyView {
                 streaming,
                 revision,
             },
-            &self.scroll_handle,
+            &self.list_state,
             &mut self.scroll_revision,
         )
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatNodePlacement {
+    Canvas,
+    Pinned { focused: bool },
+}
+
+#[derive(Clone)]
+pub struct ChatNodeProps {
+    pub workspace_id: usize,
+    pub node_id: usize,
+    pub title: String,
+    pub pi_working: bool,
+    pub input: Entity<InputState>,
+    pub title_input: Entity<InputState>,
+    pub body_view: Entity<ChatBodyView>,
+    pub editing_title: bool,
+    pub placement: ChatNodePlacement,
+}
+
+pub struct ChatNodeView {
+    app: Entity<PiDesktop>,
+    props: ChatNodeProps,
+    loading_bar_view: Entity<LoadingBarView>,
+    working_overlay_view: Entity<WorkingInputOverlayView>,
+}
+
+impl ChatNodeView {
+    pub fn new(app: Entity<PiDesktop>, props: ChatNodeProps, cx: &mut Context<Self>) -> Self {
+        let loading_bar_view = cx.new(|_| LoadingBarView::new(props.pi_working));
+        let working_overlay_view = cx.new(|_| WorkingInputOverlayView);
+        Self {
+            app,
+            props,
+            loading_bar_view,
+            working_overlay_view,
+        }
+    }
+
+    pub fn sync(&mut self, props: ChatNodeProps, cx: &mut Context<Self>) -> bool {
+        let changed = self.props.workspace_id != props.workspace_id
+            || self.props.node_id != props.node_id
+            || self.props.title != props.title
+            || self.props.pi_working != props.pi_working
+            || self.props.input != props.input
+            || self.props.title_input != props.title_input
+            || self.props.body_view != props.body_view
+            || self.props.editing_title != props.editing_title
+            || self.props.placement != props.placement;
+        if !changed {
+            return false;
+        }
+        self.props = props;
+        cx.notify();
+        true
+    }
+}
+
+impl Render for ChatNodeView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::instrumentation::record_render("ChatNodeView");
+        let node_id = self.props.node_id;
+        let workspace_id = self.props.workspace_id;
+        let scale = 1.0;
+        let pinned = matches!(self.props.placement, ChatNodePlacement::Pinned { .. });
+        let focused = matches!(
+            self.props.placement,
+            ChatNodePlacement::Pinned { focused: true }
+        );
+        let app = self.app.clone();
+        let show_working_text =
+            self.props.pi_working && self.props.input.read(cx).value().trim().is_empty();
+        self.loading_bar_view
+            .update(cx, |view, cx| view.sync(self.props.pi_working, cx));
+
+        div()
+            .id(SharedString::from(if pinned {
+                format!("pinned-chat-node-{workspace_id}-{node_id}")
+            } else {
+                format!("chat-node-{workspace_id}-{node_id}")
+            }))
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .border_1()
+            .border_color(if focused {
+                theme::accent()
+            } else {
+                theme::hairline()
+            })
+            .bg(theme::surface())
+            .text_color(theme::text())
+            .text_size(px(14.0))
+            .flex()
+            .flex_col()
+            .on_mouse_down(
+                MouseButton::Left,
+                app_listener(
+                    app.clone(),
+                    move |view, event: &gpui::MouseDownEvent, _window, cx| {
+                        if pinned {
+                            view.focus_pinned_node(workspace_id, node_id, cx);
+                        } else {
+                            view.start_node_drag(
+                                node_id,
+                                super::workspace_canvas::screen_point_from_event(event),
+                                cx,
+                            );
+                            cx.stop_propagation();
+                        }
+                    },
+                ),
+            )
+            .child(render_header(
+                app.clone(),
+                workspace_id,
+                node_id,
+                &self.props.title,
+                self.props.title_input.clone(),
+                self.props.editing_title,
+                pinned,
+                scale,
+            ))
+            .child(self.loading_bar_view.clone())
+            .child(render_body_view(
+                app.clone(),
+                workspace_id,
+                node_id,
+                self.props.body_view.clone(),
+            ))
+            .child(render_composer(
+                app.clone(),
+                workspace_id,
+                node_id,
+                self.props.input.clone(),
+                show_working_text.then_some(self.working_overlay_view.clone()),
+                scale,
+            ))
+            .when(!pinned, |this| {
+                this.child(render_resize_handle(app, node_id, scale))
+            })
+    }
+}
+
+fn app_listener<E: ?Sized>(
+    app: Entity<PiDesktop>,
+    f: impl Fn(&mut PiDesktop, &E, &mut Window, &mut Context<PiDesktop>) + 'static,
+) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+    move |event, window, cx| {
+        app.update(cx, |view, cx| f(view, event, window, cx));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn chat_node(
-    workspace_id: usize,
-    node: &SessionNode,
-    screen_position: WorldPoint,
-    pi_working: bool,
-    input: Entity<InputState>,
-    title_input: Entity<InputState>,
-    body_view: Entity<ChatBodyView>,
-    editing_title: bool,
-    _window: &mut Window,
-    cx: &mut Context<PiDesktop>,
-) -> AnyElement {
-    let node_id = node.id();
-    let scale = 1.0;
-    let node_size = node.size();
-
-    div()
-        .id(SharedString::from(format!(
-            "chat-node-{workspace_id}-{node_id}"
-        )))
-        .absolute()
-        .left(px(screen_position.x))
-        .top(px(screen_position.y))
-        .w(px(node_size.width))
-        .h(px(node_size.height))
-        .border_1()
-        .border_color(theme::hairline())
-        .bg(theme::surface())
-        .text_color(theme::text())
-        .text_size(px(14.0))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |view, event: &gpui::MouseDownEvent, _window, cx| {
-                view.start_node_drag(
-                    node_id,
-                    super::workspace_canvas::screen_point_from_event(event),
-                    cx,
-                );
-                cx.stop_propagation();
-            }),
-        )
-        .flex()
-        .flex_col()
-        .child(render_header(
-            workspace_id,
-            node,
-            title_input,
-            editing_title,
-            false,
-            scale,
-            cx,
-        ))
-        .child(render_loading_bar(pi_working, scale))
-        .child(render_body_view(workspace_id, node_id, body_view, cx))
-        .child(render_composer(
-            workspace_id,
-            node_id,
-            input,
-            pi_working,
-            scale,
-            cx,
-        ))
-        .child(render_resize_handle(node_id, scale, cx))
-        .into_any_element()
-}
-
-#[allow(clippy::too_many_arguments, dead_code)]
-pub fn pinned_chat_node_panel(
-    workspace_id: usize,
-    node: &SessionNode,
-    pi_working: bool,
-    input: Entity<InputState>,
-    title_input: Entity<InputState>,
-    body_view: Entity<ChatBodyView>,
-    editing_title: bool,
-    focused: bool,
-    _window: &mut Window,
-    cx: &mut Context<PiDesktop>,
-) -> AnyElement {
-    let node_id = node.id();
-    let scale = 1.0;
-
-    div()
-        .id(SharedString::from(format!(
-            "pinned-chat-node-{workspace_id}-{node_id}"
-        )))
-        .size_full()
-        .min_w_0()
-        .min_h_0()
-        .border_1()
-        .border_color(if focused {
-            theme::accent()
-        } else {
-            theme::hairline()
-        })
-        .bg(theme::surface())
-        .text_color(theme::text())
-        .text_size(px(14.0))
-        .flex()
-        .flex_col()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |view, _event: &gpui::MouseDownEvent, _window, cx| {
-                view.focus_pinned_node(workspace_id, node_id, cx);
-            }),
-        )
-        .child(render_header(
-            workspace_id,
-            node,
-            title_input,
-            editing_title,
-            true,
-            scale,
-            cx,
-        ))
-        .child(render_loading_bar(pi_working, scale))
-        .child(render_body_view(workspace_id, node_id, body_view, cx))
-        .child(render_composer(
-            workspace_id,
-            node_id,
-            input,
-            pi_working,
-            scale,
-            cx,
-        ))
-        .into_any_element()
-}
-
 fn render_header(
+    app: Entity<PiDesktop>,
     workspace_id: usize,
-    node: &SessionNode,
+    node_id: usize,
+    title: &str,
     title_input: Entity<InputState>,
     editing_title: bool,
     pinned: bool,
     scale: f32,
-    cx: &mut Context<PiDesktop>,
 ) -> AnyElement {
-    let node_id = node.id();
     h_flex()
         .h(scaled_px(46.0, scale))
         .px(scaled_px(16.0, scale))
@@ -292,13 +331,13 @@ fn render_header(
                 .items_center()
                 .gap(scaled_px(10.0, scale))
                 .child(render_title(
+                    app.clone(),
                     workspace_id,
                     node_id,
-                    node.title(),
+                    title.to_owned(),
                     title_input,
                     editing_title,
                     scale,
-                    cx,
                 )),
         )
         .child(
@@ -306,20 +345,26 @@ fn render_header(
                 .flex_none()
                 .items_center()
                 .gap(scaled_px(4.0, scale))
-                .child(pin_toggle(workspace_id, node_id, pinned, scale, cx))
-                .child(close_button(workspace_id, node_id, scale, cx)),
+                .child(pin_toggle(
+                    app.clone(),
+                    workspace_id,
+                    node_id,
+                    pinned,
+                    scale,
+                ))
+                .child(close_button(app, workspace_id, node_id, scale)),
         )
         .into_any_element()
 }
 
 fn render_title(
+    app: Entity<PiDesktop>,
     workspace_id: usize,
     node_id: usize,
     title: String,
     input: Entity<InputState>,
     editing: bool,
     scale: f32,
-    cx: &mut Context<PiDesktop>,
 ) -> AnyElement {
     if editing {
         return div()
@@ -335,10 +380,13 @@ fn render_title(
             .text_size(scaled_px(14.0, scale))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |view, _event: &gpui::MouseDownEvent, _window, cx| {
-                    view.focus_pinned_node(workspace_id, node_id, cx);
-                    cx.stop_propagation();
-                }),
+                app_listener(
+                    app.clone(),
+                    move |view, _event: &gpui::MouseDownEvent, _window, cx| {
+                        view.focus_pinned_node(workspace_id, node_id, cx);
+                        cx.stop_propagation();
+                    },
+                ),
             )
             .child(
                 Input::new(&input)
@@ -361,52 +409,26 @@ fn render_title(
         .text_color(theme::text())
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |view, _event: &gpui::MouseDownEvent, _window, cx| {
-                view.focus_pinned_node(workspace_id, node_id, cx);
-                cx.stop_propagation();
-            }),
+            app_listener(
+                app.clone(),
+                move |view, _event: &gpui::MouseDownEvent, _window, cx| {
+                    view.focus_pinned_node(workspace_id, node_id, cx);
+                    cx.stop_propagation();
+                },
+            ),
         )
-        .on_click(cx.listener(move |view, _, window, cx| {
+        .on_click(app_listener(app, move |view, _, window, cx| {
             view.start_session_title_edit(workspace_id, node_id, window, cx);
         }))
         .child(title)
         .into_any_element()
 }
 
-fn render_loading_bar(visible: bool, scale: f32) -> AnyElement {
-    if !visible {
-        return div().h(px(0.0)).into_any_element();
-    }
-
-    div()
-        .relative()
-        .h(scaled_px(3.0, scale))
-        .overflow_hidden()
-        .bg(theme::complement().opacity(0.18))
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left(scaled_px(-96.0, scale))
-                .h_full()
-                .w(scaled_px(96.0, scale))
-                .bg(theme::complement())
-                .with_animation(
-                    "chat-node-loading-bar",
-                    Animation::new(Duration::from_millis(1150))
-                        .repeat()
-                        .with_easing(cubic_bezier(0.32, 0.72, 0.0, 1.0)),
-                    move |this, delta| this.left(scaled_px(-96.0 + (740.0 + 96.0) * delta, scale)),
-                ),
-        )
-        .into_any_element()
-}
-
 fn render_body_view(
+    app: Entity<PiDesktop>,
     workspace_id: usize,
     node_id: usize,
     body_view: Entity<ChatBodyView>,
-    cx: &mut Context<PiDesktop>,
 ) -> AnyElement {
     div()
         .relative()
@@ -416,10 +438,13 @@ fn render_body_view(
         .bg(theme::surface())
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |view, _event: &gpui::MouseDownEvent, _window, cx| {
-                view.focus_pinned_node(workspace_id, node_id, cx);
-                cx.stop_propagation();
-            }),
+            app_listener(
+                app,
+                move |view, _event: &gpui::MouseDownEvent, _window, cx| {
+                    view.focus_pinned_node(workspace_id, node_id, cx);
+                    cx.stop_propagation();
+                },
+            ),
         )
         .child(AnyView::from(body_view).cached(StyleRefinement::default().size_full()))
         .into_any_element()
@@ -436,34 +461,50 @@ fn render_body_contents(
     workspace_id: usize,
     node_id: usize,
     body: BodyRenderState,
-    scroll_handle: &ScrollHandle,
+    list_state: &ListState,
     scroll_revision: &mut u64,
 ) -> AnyElement {
     if body.streaming && *scroll_revision != body.revision {
-        scroll_handle.scroll_to_bottom();
+        list_state.scroll_to(ListOffset {
+            item_ix: body.message_views.len(),
+            offset_in_item: px(0.0),
+        });
         *scroll_revision = body.revision;
     }
+
+    let message_views = body.message_views;
+    let _item_count = message_views.len();
 
     div()
         .id(SharedString::from(format!(
             "chat-node-scroll-area-{workspace_id}-{node_id}"
         )))
         .size_full()
-        .track_scroll(scroll_handle)
-        .overflow_y_scroll()
-        .vertical_scrollbar(scroll_handle)
-        .child(
-            v_flex()
-                .min_h_full()
-                .justify_end()
-                .gap(px(14.0))
-                .px(px(16.0))
-                .py(px(14.0))
-                .when(body.entries_empty, |this| {
-                    this.child(render_empty_body(1.0))
+        .overflow_hidden()
+        .when(body.entries_empty, |this| {
+            this.child(
+                div()
+                    .size_full()
+                    .px(px(16.0))
+                    .py(px(14.0))
+                    .child(render_empty_body(1.0)),
+            )
+        })
+        .when(!body.entries_empty, |this| {
+            this.child(
+                list(list_state.clone(), move |index, _window, _cx| {
+                    let view = message_views[index].clone();
+                    div()
+                        .px(px(16.0))
+                        .pt(if index == 0 { px(14.0) } else { px(0.0) })
+                        .pb(px(14.0))
+                        .child(view)
+                        .into_any_element()
                 })
-                .children(body.message_views),
-        )
+                .size_full(),
+            )
+            .vertical_scrollbar(list_state)
+        })
         .into_any_element()
 }
 
@@ -665,14 +706,13 @@ fn tool_status_parts(status: ToolStatus) -> (&'static str, Hsla) {
 }
 
 fn render_composer(
+    app: Entity<PiDesktop>,
     workspace_id: usize,
     node_id: usize,
     input: Entity<InputState>,
-    pi_working: bool,
+    working_overlay_view: Option<Entity<WorkingInputOverlayView>>,
     scale: f32,
-    cx: &mut Context<PiDesktop>,
 ) -> AnyElement {
-    let show_working_text = pi_working && input.read(cx).value().trim().is_empty();
     h_flex()
         .mx(scaled_px(16.0, scale))
         .mb(scaled_px(16.0, scale))
@@ -685,10 +725,13 @@ fn render_composer(
         .text_size(scaled_px(14.0, scale))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |view, _event: &gpui::MouseDownEvent, _window, cx| {
-                view.focus_pinned_node(workspace_id, node_id, cx);
-                cx.stop_propagation();
-            }),
+            app_listener(
+                app.clone(),
+                move |view, _event: &gpui::MouseDownEvent, _window, cx| {
+                    view.focus_pinned_node(workspace_id, node_id, cx);
+                    cx.stop_propagation();
+                },
+            ),
         )
         .child(
             div()
@@ -696,9 +739,7 @@ fn render_composer(
                 .flex_1()
                 .min_w_0()
                 .child(Input::new(&input).appearance(false).h_full())
-                .when(show_working_text, |this| {
-                    this.child(working_input_overlay(scale))
-                }),
+                .when_some(working_overlay_view, |this, view| this.child(view)),
         )
         .child(
             div()
@@ -715,7 +756,7 @@ fn render_composer(
                 .text_size(scaled_px(18.0, scale))
                 .text_color(theme::text())
                 .hover(|style| style.bg(theme::surface_hover()))
-                .on_click(cx.listener(move |view, _, window, cx| {
+                .on_click(app_listener(app, move |view, _, window, cx| {
                     view.submit_chat_node(workspace_id, node_id, window, cx);
                 }))
                 .child("→"),
@@ -723,54 +764,12 @@ fn render_composer(
         .into_any_element()
 }
 
-fn working_input_overlay(scale: f32) -> AnyElement {
-    h_flex()
-        .absolute()
-        .top_0()
-        .right_0()
-        .bottom_0()
-        .left_0()
-        .items_center()
-        .gap(scaled_px(1.0, scale))
-        .bg(theme::app_bg())
-        .text_size(scaled_px(14.0, scale))
-        .text_color(theme::text_muted())
-        .child("Working")
-        .child(working_dot(0, scale))
-        .child(working_dot(1, scale))
-        .child(working_dot(2, scale))
-        .into_any_element()
-}
-
-fn working_dot(index: usize, scale: f32) -> AnyElement {
-    let threshold = match index {
-        0 => 0.20,
-        1 => 0.45,
-        _ => 0.70,
-    };
-    div()
-        .child(".")
-        .text_size(scaled_px(14.0, scale))
-        .with_animation(
-            SharedString::from(format!("chat-working-dot-{index}")),
-            Animation::new(Duration::from_millis(900)).repeat(),
-            move |this, delta| {
-                if delta >= threshold {
-                    this.opacity(1.0)
-                } else {
-                    this.opacity(0.0)
-                }
-            },
-        )
-        .into_any_element()
-}
-
 fn pin_toggle(
+    app: Entity<PiDesktop>,
     workspace_id: usize,
     node_id: usize,
     pinned: bool,
     scale: f32,
-    cx: &mut Context<PiDesktop>,
 ) -> AnyElement {
     div()
         .id(SharedString::from(format!(
@@ -798,12 +797,15 @@ fn pin_toggle(
         .hover(|style| style.bg(theme::surface_hover()))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |view, _event: &gpui::MouseDownEvent, _window, cx| {
-                view.focus_pinned_node(workspace_id, node_id, cx);
-                cx.stop_propagation();
-            }),
+            app_listener(
+                app.clone(),
+                move |view, _event: &gpui::MouseDownEvent, _window, cx| {
+                    view.focus_pinned_node(workspace_id, node_id, cx);
+                    cx.stop_propagation();
+                },
+            ),
         )
-        .on_click(cx.listener(move |view, _, _window, cx| {
+        .on_click(app_listener(app, move |view, _, _window, cx| {
             view.toggle_session_node_pin(workspace_id, node_id, cx);
         }))
         .child(
@@ -820,10 +822,10 @@ fn pin_toggle(
 }
 
 fn close_button(
+    app: Entity<PiDesktop>,
     workspace_id: usize,
     node_id: usize,
     scale: f32,
-    cx: &mut Context<PiDesktop>,
 ) -> AnyElement {
     div()
         .id(SharedString::from(format!(
@@ -843,19 +845,22 @@ fn close_button(
         .hover(|style| style.bg(theme::surface_hover()))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |view, _event: &gpui::MouseDownEvent, _window, cx| {
-                view.focus_pinned_node(workspace_id, node_id, cx);
-                cx.stop_propagation();
-            }),
+            app_listener(
+                app.clone(),
+                move |view, _event: &gpui::MouseDownEvent, _window, cx| {
+                    view.focus_pinned_node(workspace_id, node_id, cx);
+                    cx.stop_propagation();
+                },
+            ),
         )
-        .on_click(cx.listener(move |view, _, _window, cx| {
+        .on_click(app_listener(app, move |view, _, _window, cx| {
             view.close_session_node(workspace_id, node_id, cx);
         }))
         .child("×")
         .into_any_element()
 }
 
-fn render_resize_handle(node_id: usize, scale: f32, cx: &mut Context<PiDesktop>) -> AnyElement {
+fn render_resize_handle(app: Entity<PiDesktop>, node_id: usize, scale: f32) -> AnyElement {
     div()
         .id(SharedString::from(format!("resize-chat-node-{node_id}")))
         .absolute()
@@ -873,14 +878,17 @@ fn render_resize_handle(node_id: usize, scale: f32, cx: &mut Context<PiDesktop>)
         .pb(scaled_px(3.0, scale))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |view, event: &gpui::MouseDownEvent, _window, cx| {
-                view.start_node_resize(
-                    node_id,
-                    super::workspace_canvas::screen_point_from_event(event),
-                    cx,
-                );
-                cx.stop_propagation();
-            }),
+            app_listener(
+                app,
+                move |view, event: &gpui::MouseDownEvent, _window, cx| {
+                    view.start_node_resize(
+                        node_id,
+                        super::workspace_canvas::screen_point_from_event(event),
+                        cx,
+                    );
+                    cx.stop_propagation();
+                },
+            ),
         )
         .child(
             div()

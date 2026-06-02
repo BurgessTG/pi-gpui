@@ -1,52 +1,111 @@
 # Code Context
 
 ## Files Retrieved
-1. `crates/pi-desktop/src/app.rs` (lines 71-134, 247-270) - root `PiDesktop` state, chat/transcript maps, render throttle flags.
-2. `crates/pi-desktop/src/app/render.rs` (lines 6-24, 94-333, 385-544) - root render and workspace/canvas/pinned composition.
-3. `crates/pi-desktop/src/app/backend_flow.rs` (lines 1-283) - backend subscriptions, bridge event application, render throttling.
-4. `crates/pi-desktop/src/app/chat_actions.rs` (lines 16-120) - chat submit/stream lifecycle.
-5. `crates/pi-desktop/src/app/canvas_actions.rs` (lines 162-367) - canvas drag/draw/zoom updates and throttled render requests.
-6. `crates/pi-desktop/src/components/workspace_canvas.rs` (lines 1-929) - canvas element tree, node visibility, drawing/grid/text-box rendering.
-7. `crates/pi-desktop/src/components/chat_node.rs` (lines 1-777) - chat node, transcript body, markdown/tool/composer rendering.
-8. `crates/pi-desktop/src/components/pinned_panels.rs` (lines 17-54) - pinned node panel rendering path.
-9. `crates/pi-desktop/src/workspace/canvas.rs` (lines 1-687) - `CanvasState` model and mutation operations.
-10. `crates/pi-desktop/src/workspace/state.rs` (lines 1-488) - workspace/tab wrappers around active canvas and pinned layout.
-11. `crates/pi-desktop/src/chat/transcript.rs` (lines 1-418) - transcript storage and bridge event parsing.
+1. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/README.md` (lines 42-50) - GPUI’s intended registers: entities, views, elements.
+2. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/docs/contexts.md` (lines 1-33) - App/Context/Entity/Window roles.
+3. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/_ownership_and_data_flow.rs` (lines 1-72) - entity ownership/update/notify examples.
+4. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/element.rs` (lines 1-32) - immediate element tree lifecycle and when custom elements are appropriate.
+5. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/view.rs` (lines 99-294) - `AnyView::cached` mechanics and cache invalidation.
+6. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/app.rs` (lines 753-833, 1198-1255, 2033-2054) - window invalidator tracking, flush effects, notify propagation.
+7. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/window.rs` (lines 116-124, 1303-1318, 1366-1371, 1914-1995, 2577-2625) - dirty view marking, refresh, draw/access tracking, keyed state.
+8. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/elements/animation.rs` (lines 158-178) and `window.rs` (lines 1648-1658) - animation frames notify the current view.
+9. `/home/burgess/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui-0.2.2/src/elements/canvas.rs` (lines 8-74) - `canvas` is low-level callback painting, no inherent caching/id.
+10. `vendor/gpui-component/README.md` (lines 7-19) - component library claims virtualized list/table and markdown support.
+11. `vendor/gpui-component/src/text/text_view.rs` (lines 401-517, 599-755) - markdown state uses `use_keyed_state`, debounced parse, parent notify, selection.
+12. `vendor/gpui-component/src/scroll/scrollable.rs` (lines 111-130) - scroll wrappers use `use_keyed_state` for handles.
+13. `vendor/gpui-component/src/virtual_list.rs` (lines 1-13, 116-145) - virtual list only renders visible ranges.
+14. `vendor/gpui-component/src/resizable/panel.rs` (lines 126-160, 260-317, 377-419) and `vendor/gpui-component/src/resizable/mod.rs` (lines 95-142, 197-263, 265-285) - resizable group/state behavior.
+15. `crates/pi-desktop/src/app.rs` (lines 72-138, 190-283, 293-319) - root entity fields, render throttle constants, child entities/maps, transcript notify helper.
+16. `crates/pi-desktop/src/app/render.rs` (lines 6-39, 94-369, 394-464) - root render, UI state creation during render, canvas/pin layout, settings animations.
+17. `crates/pi-desktop/src/components/workspace_canvas.rs` (lines 44-230, 233-277, 385-430, 616-759, 797-814) - canvas event handlers, custom paint, culling, text boxes, grid.
+18. `crates/pi-desktop/src/components/chat_node.rs` (lines 24-140, 390-467, 537-565, 680-765) - chat body/message entities, cached body, scroll, markdown, repeated animations.
+19. `crates/pi-desktop/src/app/canvas_actions.rs` (lines 177-232, 308-357) - high-frequency canvas/minimap/zoom updates use coalesced render requests.
+20. `crates/pi-desktop/src/app/backend_flow.rs` (lines 110-203, 205-247, 286-314) - backend event batching and root/canvas render throttles.
+21. `crates/pi-desktop/src/components/pinned_panels.rs` (lines 16-74) and `crates/pi-desktop/src/app/render.rs` (lines 304-369) - pinned panel composition and shell sizing.
+22. `crates/pi-desktop/src/design/theme.rs` (lines 212-289) - component theme application and `window.refresh()` use.
+23. `crates/pi-desktop/src/main.rs` (lines 48-60) - app/root construction; PiDesktop is passed to gpui-component `Root` uncached.
 
 ## Key Code
-- Root state is monolithic: `PiDesktop` owns `workspace_state`, input entity maps, `chat_transcripts: HashMap<(usize, usize), ChatTranscript>`, `streaming_node`, `event_render_scheduled`, and `canvas_render_scheduled` (`app.rs:83-134`). The shared throttle is `FRAME_RENDER_INTERVAL = 8ms` (`app.rs:71-72`).
-- Backend stream events are drained in batches up to 128 (`backend_flow.rs:109-151`), then each `PiSessionEvent` mutates `chat_transcripts[streaming_node]`, updates status, and calls `request_event_render` (`backend_flow.rs:172-185`). `request_event_render` schedules a root `cx.notify()` after 8ms (`backend_flow.rs:254-264`).
-- Root render rebuilds the app (`render.rs:6-24`). Workspace render scans all active nodes, reconciles input/subscriptions (`render.rs:120-189`), scans drawings for text boxes (`render.rs:191-251`), then calls `workspace_canvas(...)` with the full transcript map (`render.rs:271-293`). Pinned mode also rebuilds `pinned_panel_region` (`render.rs:295-323`).
-- Canvas render composes grid, drawings, text boxes, marker layers, all visible unpinned nodes, minimap, and toolbar (`workspace_canvas.rs:168-229`). Visible nodes call `chat_node::chat_node(...)` with their transcript (`workspace_canvas.rs:191-215`). Pinned panels separately find pinned nodes and call `pinned_chat_node_panel` (`pinned_panels.rs:31-54`).
-- Chat body obtains `entries`, `streaming`, `revision`, auto-scrolls on each revision, then renders every entry (`chat_node.rs:291-360`). Assistant entries call `TextView::markdown(..., content.to_owned(), ...)` every render (`chat_node.rs:431-459`).
-- Transcript updates replace full assistant text: `message_update` calls `update_assistant_from_message` (`transcript.rs:149-157`), which computes `message_text`, compares whole strings, assigns the new whole string, and bumps `revision` (`transcript.rs:237-248`). `content_text` clones/joins text parts (`transcript.rs:339-378`); tool updates can pretty-print/truncate JSON (`transcript.rs:343-397`).
+
+GPUI model:
+```rust
+// AnyView::cached: reuses prepaint/paint if bounds/mask/text style match,
+// the view is not dirty, and window.refresh is not active.
+// gpui view.rs:99-103, 208-223, 273-281
+```
+```rust
+// notify: if a rendered window has accessed an entity, GPUI invalidates that
+// entity; Window later marks the rendered view path dirty.
+// gpui app.rs:2033-2054; window.rs:1303-1318
+```
+```rust
+// use_keyed_state observes the created state entity and notifies current_view
+// when that state notifies.
+// gpui window.rs:2577-2598
+```
+```rust
+// AnimationElement calls window.request_animation_frame(); that notifies the
+// current view next frame.
+// gpui elements/animation.rs:172-176; window.rs:1653-1657
+```
+
+Pi desktop hot spots:
+```rust
+// Root entity owns broad state + per-node child entities.
+// crates/pi-desktop/src/app.rs:84-138
+workspace_state: WorkspaceState,
+pin_shell_state: Entity<ResizableState>,
+chat_transcripts: HashMap<(usize, usize), Entity<ChatTranscript>>,
+chat_body_views: HashMap<(usize, usize), Entity<chat_node::ChatBodyView>>,
+```
+```rust
+// render_workspace_content creates/retains InputState, ChatTranscript, ChatBodyView
+// while rendering, keyed by (workspace_id, node_id) or drawing index.
+// crates/pi-desktop/src/app/render.rs:120-260
+```
+```rust
+// Only chat body is cached today.
+// crates/pi-desktop/src/components/chat_node.rs:405-425
+.child(AnyView::from(body_view).cached(StyleRefinement::default().size_full()))
+```
+```rust
+// ChatBodyView observes transcript, syncs message view entities, then notifies itself.
+// crates/pi-desktop/src/components/chat_node.rs:75-117
+```
+```rust
+// Canvas custom paint clones visible drawings and rebuilds paths on paint.
+// crates/pi-desktop/src/components/workspace_canvas.rs:233-277, 385-430
+```
+```rust
+// High-frequency canvas motion mutates WorkspaceState, then schedules one root notify after 8ms.
+// crates/pi-desktop/src/app/canvas_actions.rs:177-232; backend_flow.rs:301-314
+```
 
 ## Architecture
-Current data flow for one streamed node:
-1. `submit_chat_node` clears the input, pushes a user message, sets `streaming_node = Some(key)`, sets `pending = true`, and root-notifies (`chat_actions.rs:16-69`).
-2. Backend bridge events arrive through the subscription loop, are batch-drained, and are applied to the single `streaming_node` transcript (`backend_flow.rs:109-185`).
-3. A coalesced timer root-notifies the entire `PiDesktop` every ~8ms while events keep arriving (`backend_flow.rs:254-264`).
-4. Root render rebuilds workspace UI, canvas layers, visible nodes, and pinned panels (`render.rs:94-333`; `workspace_canvas.rs:168-229`).
-5. The streaming chat node renders the full transcript list and the growing assistant markdown body (`chat_node.rs:291-360`, `431-459`).
 
-Hot paths / likely sluggishness causes:
-- **Root-level invalidation for token updates.** A streaming token dirties `PiDesktop`, not a node-local view, so unchanged tabs/status/canvas/nodes/text boxes are re-evaluated (`backend_flow.rs:178-185`, `254-264`; `render.rs:120-293`).
-- **Full markdown/text work per frame.** Each render passes the whole assistant text into `TextView::markdown`; each message update also reconstructs and compares the whole assistant string. This is likely O(total streamed text) per event/render, possibly O(n²) over a long response (`chat_node.rs:431-459`; `transcript.rs:237-248`, `339-378`).
-- **All transcript entries render every time.** No transcript virtualization or stable per-message entities; historical entries and tool blocks are rebuilt during each root render (`chat_node.rs:347-357`, `476-530`).
-- **Auto-scroll mutates keyed state during render.** `scroll_to_bottom` plus `scroll_revision.update` runs inside `render_body` on every transcript revision, adding layout/scroll work to the render path (`chat_node.rs:302-319`).
-- **Canvas work happens even for chat-only updates.** `workspace_canvas` recreates grid/drawing/textbox/node children; drawings are filtered and cloned (`workspace_canvas.rs:234-269`), pen paths are rebuilt point-by-point during paint (`workspace_canvas.rs:386-429`), and grid lines are repainted (`workspace_canvas.rs:803-859`).
-- **Event render requests are unconditional for session events.** `observe_session_event` returns no changed flag, and `request_event_render` is called for every `PiSessionEvent` while streaming, even if the event produced no transcript change (`backend_flow.rs:178-185`; `transcript.rs:78-97`).
+Current architecture is **partially aligned** with GPUI’s performance model:
+
+- Good alignment: persistent state lives in entities where it matters (`InputState`, `ResizableState`, `ChatTranscript`, `ChatBodyView`, `ChatMessageView`); backend events are batched; canvas drag repaint is coalesced; markdown uses gpui-component `TextView` with stable IDs and debounced parsing; `window.refresh()` appears limited to global theme changes.
+- Main mismatch: `PiDesktop` is a large root view owning `WorkspaceState` by value. Canvas/node/pin mutations generally dirty `PiDesktop`, so immediate canvas layers, node shells, minimap, toolbar, and status all rebuild together. The single `AnyView::cached` chat body protects message content from unrelated root notifies, but the canvas side is still mostly immediate-mode every redraw.
+- `AnyView::cached` is used correctly for `ChatBodyView` because the wrapper is full-size and the cache style is `size_full`. It will skip transcript body layout/paint when root state changes but transcript/body did not. It does not help the outer chat node, canvas grid, drawings, minimap, or repeated loading/working animations.
+- Notify propagation is mostly sound. `update_chat_transcript` only notifies when transcript revision changes, and `ChatBodyView` observes it. One risk: `apply_session_events` updates `self.status` without directly notifying `PiDesktop`; it relies on transcript/body invalidation to repaint. If status changes but transcript revision does not, status may not update promptly.
+- Animations are featureful but broad. Repeated chat loading bars/dots are rendered inside the `PiDesktop` view path, so their `request_animation_frame` likely notifies `PiDesktop` every frame while visible. Short drawer/tool fade animations are acceptable; repeated streaming indicators can drive full root/canvas rebuilds unless more subtrees are cached/split.
+- Scroll/markdown quality is good for modest transcript sizes. `TextView::markdown` uses keyed state and background debounce; selection is preserved/handled by TextView. The chat transcript itself is a plain `v_flex` of all message views inside a scroll div, not a virtual list.
+- Resizable panels are aligned with gpui-component design: explicit `ResizableState` entities are supplied, and the component also supports `use_keyed_state` fallback. Current pinned panel sizes are index-based, not node-ID-based, so swaps/unpins preserve slot sizes rather than per-node sizes.
+- Custom `canvas` usage is appropriate for short-term/simple paint, but for many drawings it becomes the main scaling risk: visible drawings are cloned and paths rebuilt every paint, and background grids repaint on unrelated invalidations.
+
+Concrete improvements that keep quality/features/animations:
+
+1. **Split heavy UI into cached view entities.** Add `WorkspaceCanvasView` / `ChatNodeView` / maybe `CanvasLayerView` entities and render them through `AnyView::cached` with exact outer layout styles. Keep the root as coordinator; make subviews observe or receive narrowly-scoped state/revisions.
+2. **Cache message rows too.** Render `ChatMessageView` entities through `AnyView::cached` inside `ChatBodyView`, so a streaming assistant update does not re-layout unchanged prior messages. Keep `TextView::markdown` and selection.
+3. **Virtualize long transcripts when needed.** For high message counts, replace the all-children `v_flex` with gpui/gpui-component list/virtual list while retaining stable message entities and bottom-scroll behavior. `virtual_list.rs` is designed for visible-range rendering.
+4. **Move canvas state toward entity/revision granularity.** Make active canvas/tab state an entity or maintain explicit `viewport_revision`, `drawings_revision`, `nodes_revision`, `selection_revision`. Notify only the layer/view whose inputs changed.
+5. **Cache/precompute drawing geometry.** Store world-space drawing bounds and maybe path data keyed by drawing revision/stroke/tool; rebuild only changed drawings or when viewport/stroke changes. For very large drawing sets, implement a custom `Element` with `with_element_state` instead of plain callback `canvas`.
+6. **Use frame scheduling instead of fixed timer where practical.** `request_canvas_render` is a good coalescer, but an 8ms `Timer` is detached from the actual window frame. Passing `window` through drag/zoom updates and using `window.request_animation_frame()`/`on_next_frame` for canvas repaint would align with GPUI’s frame model.
+7. **Isolate repeated indicators.** Keep loading bars/dots, but put long-running repeat animations in small child views and cache unaffected siblings. This reduces repeated full canvas/chat rebuilds during streaming.
+8. **Consider status as its own entity.** Status changes are frequent and low-cost but currently dirty root; a `StatusBarView`/status entity would avoid root invalidation and fix the `apply_session_events` status-notify edge case.
+9. **Refine pinned resizable state if UX requires.** Persist sizes by node ID or panel ID if swaps/unpins should carry size with content; add explicit `size_range` constraints for pinned shell/panels. Current index-based `ResizableState` is acceptable but not semantic.
+10. **Avoid adding more `window.refresh()`.** Current theme refresh is appropriate because global theme functions are not entity-tracked and refresh intentionally bypasses caches. Normal state changes should remain entity `notify`-driven.
 
 ## Start Here
-Start with `crates/pi-desktop/src/app/backend_flow.rs`: it is the highest-leverage choke point because it turns backend stream events into root-wide 8ms invalidations. Then inspect `crates/pi-desktop/src/components/chat_node.rs` and `crates/pi-desktop/src/chat/transcript.rs` for the full-text markdown/render work.
-
-## Refactor Recommendations
-1. Split root state into smaller GPUI entities: `WorkspaceCanvasView`, `ChatNodeView`, and per-node `TranscriptState`. Backend events should update/notify only the affected transcript/node, not `PiDesktop`.
-2. Make `observe_session_event` return a change/delta result; batch all envelopes first, then schedule one render only if visible transcript/status changed.
-3. Cache or incrementally render assistant content: store chunks/rope or diff suffixes, render streaming text cheaply, and parse markdown on completion or at a lower cadence.
-4. Move auto-scroll out of render into a post-update/effect path and throttle it.
-5. Virtualize or key transcript entries so old messages/tools do not rebuild on every token.
-6. Separate canvas layers from chat updates; cache drawing paths/visibility by drawing+viewport revision and avoid cloning visible drawings each render.
-7. Consider raising stream UI cadence to 16-33ms after scoping invalidation; keep canvas interaction cadence separate.
-
-Open questions: whether `TextView::markdown` internally caches by id/revision, and whether backend `message_update` can provide deltas instead of full message content.
+Open `crates/pi-desktop/src/components/chat_node.rs` first. It shows the best-aligned pattern already present: model entity (`ChatTranscript`) -> observed view entity (`ChatBodyView`) -> cached `AnyView` -> markdown `TextView`. Use that pattern as the template for canvas layers and chat node shells before touching lower-level paint code.

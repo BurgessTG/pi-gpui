@@ -1,30 +1,29 @@
 use std::collections::HashMap;
 
 use gpui::{
-    actions, canvas, div, fill, point, px, size, AnyElement, Bounds, Context, Entity, FocusHandle,
-    Hsla, InteractiveElement as _, IntoElement as _, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement as _, PathBuilder, PathStyle, Pixels, Point, ScrollWheelEvent, StrokeOptions,
-    Styled as _, Window,
+    AnyElement, Bounds, Context, Entity, FocusHandle, Hsla, InteractiveElement as _,
+    IntoElement as _, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _, PathBuilder,
+    PathStyle, Pixels, Point, ScrollWheelEvent, SharedString, StrokeOptions, Styled as _, Window,
+    actions, canvas, div, fill, point, px, size,
 };
 use gpui_component::{
+    IconName,
     input::{Input, InputState},
     menu::ContextMenuExt as _,
     menu::PopupMenu,
     slider::SliderState,
-    IconName,
 };
 use lyon::path::{LineCap, LineJoin};
-
-use crate::app::PiDesktop;
 
 use crate::components::chat_node;
 use crate::components::workspace_canvas_markers::{render_number_markers, render_pinned_markers};
 use crate::components::workspace_canvas_minimap::render_minimap;
 use crate::components::workspace_canvas_toolbar::render_drawing_tool_overlay;
+use crate::components::workspace_canvas_view::WorkspaceCanvasView;
 use crate::design::theme;
 use crate::workspace::canvas::{
-    CanvasDrawing, CanvasDrawingDraft, CanvasDrawingTool, CanvasState, CanvasViewport, WorldPoint,
-    WorldSize,
+    CanvasDrawing, CanvasDrawingBounds, CanvasDrawingDraft, CanvasDrawingTool, CanvasState,
+    CanvasViewport, WorldPoint, WorldSize,
 };
 use crate::workspace::state::WorkspaceTab;
 
@@ -47,13 +46,9 @@ pub fn workspace_canvas(
     workspace_id: usize,
     can_fork: bool,
     can_resume: bool,
-    working_node: Option<(usize, usize)>,
     canvas_size: WorldSize,
-    chat_inputs: &HashMap<(usize, usize), Entity<InputState>>,
-    title_inputs: &HashMap<(usize, usize), Entity<InputState>>,
-    text_box_inputs: &HashMap<(usize, usize), Entity<InputState>>,
-    chat_body_views: &HashMap<(usize, usize), Entity<chat_node::ChatBodyView>>,
-    editing_title: Option<(usize, usize)>,
+    text_box_inputs: &HashMap<usize, Entity<InputState>>,
+    chat_node_views: &HashMap<usize, Entity<chat_node::ChatNodeView>>,
     snap_to_grid: bool,
     drawing_tools_visible: bool,
     active_drawing_tool: CanvasDrawingTool,
@@ -62,8 +57,7 @@ pub fn workspace_canvas(
     can_redo_drawing: bool,
     drawing_stroke_slider: Entity<SliderState>,
     focus_handle: FocusHandle,
-    window: &mut Window,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> AnyElement {
     let canvas = tab.canvas();
     let pinned_layout = tab.pinned_layout();
@@ -132,27 +126,32 @@ pub fn workspace_canvas(
             cx.listener(move |view, event: &MouseMoveEvent, window, cx| {
                 if event.dragging() {
                     if drawing_active {
-                        view.update_canvas_drawing(screen_point_from_mouse_move(event), cx);
+                        view.update_canvas_drawing(screen_point_from_mouse_move(event), window, cx);
                         cx.stop_propagation();
                         return;
                     }
                     let minimap_local =
                         minimap_local_from_screen(screen_point_from_mouse_move(event), window);
-                    if view.update_minimap_pan(minimap_local, cx) {
+                    if view.update_minimap_pan(minimap_local, window, cx) {
                         cx.stop_propagation();
                         return;
                     }
-                    view.update_canvas_pan(screen_point_from_mouse_move(event), cx);
+                    view.update_canvas_pan(screen_point_from_mouse_move(event), window, cx);
                 } else {
                     view.end_minimap_pan(cx);
                     view.end_canvas_pan(cx);
                 }
             }),
         )
-        .on_scroll_wheel(cx.listener(|view, event: &ScrollWheelEvent, _window, cx| {
+        .on_scroll_wheel(cx.listener(|view, event: &ScrollWheelEvent, window, cx| {
             let zoom_factor = zoom_factor_from_scroll_event(event);
             if zoom_factor != 1.0 {
-                view.zoom_active_canvas_at(screen_point_from_scroll_event(event), zoom_factor, cx);
+                view.zoom_active_canvas_at(
+                    screen_point_from_scroll_event(event),
+                    zoom_factor,
+                    window,
+                    cx,
+                );
                 cx.stop_propagation();
             }
         }))
@@ -196,22 +195,22 @@ pub fn workspace_canvas(
             if !node_visible(screen_position, node.size(), canvas_size) {
                 return None;
             }
-            let key = (workspace_id, node.id());
-            let input = chat_inputs.get(&key)?.clone();
-            let title_input = title_inputs.get(&key)?.clone();
-            let body_view = chat_body_views.get(&key)?.clone();
-            Some(chat_node::chat_node(
-                workspace_id,
-                node,
-                screen_position,
-                working_node == Some(key),
-                input,
-                title_input,
-                body_view,
-                editing_title == Some(key),
-                window,
-                cx,
-            ))
+            let node_view = chat_node_views.get(&node.id())?.clone();
+            let node_size = node.size();
+            Some(
+                div()
+                    .id(SharedString::from(format!(
+                        "chat-node-frame-{workspace_id}-{}",
+                        node.id()
+                    )))
+                    .absolute()
+                    .left(px(screen_position.x))
+                    .top(px(screen_position.y))
+                    .w(px(node_size.width))
+                    .h(px(node_size.height))
+                    .child(node_view)
+                    .into_any_element(),
+            )
         }))
         .child(render_minimap(canvas, canvas_size, cx))
         .child(render_drawing_tool_overlay(
@@ -236,12 +235,16 @@ fn render_drawings(
     canvas_size: WorldSize,
 ) -> AnyElement {
     let viewport = canvas_state.viewport();
+    let visible_bounds = visible_world_bounds(viewport, canvas_size, stroke_width + 24.0);
     let drawings = canvas_state
-        .drawings()
-        .iter()
-        .enumerate()
-        .filter(|(_, drawing)| drawing_visible(drawing, viewport, canvas_size, stroke_width))
-        .map(|(index, drawing)| (index, drawing.clone()))
+        .drawing_indices_in_bounds(&visible_bounds)
+        .into_iter()
+        .filter_map(|index| {
+            canvas_state
+                .drawings()
+                .get(index)
+                .map(|drawing| (index, drawing.clone()))
+        })
         .collect::<Vec<_>>();
     let draft = canvas_state.drawing_draft().cloned();
     let color = theme::text();
@@ -613,28 +616,21 @@ fn drawing_point(
     )
 }
 
-fn drawing_visible(
-    drawing: &CanvasDrawing,
+pub(super) fn visible_world_bounds(
     viewport: CanvasViewport,
     canvas_size: WorldSize,
-    stroke_width: f32,
-) -> bool {
-    let Some(drawing_bounds) = drawing.bounds() else {
-        return false;
-    };
+    screen_padding: f32,
+) -> CanvasDrawingBounds {
     let top_left = viewport.screen_to_world(WorldPoint::new(0.0, 0.0));
     let bottom_right =
         viewport.screen_to_world(WorldPoint::new(canvas_size.width, canvas_size.height));
-    let padding = (stroke_width + 24.0) / viewport.zoom.max(0.1);
-    let visible_left = top_left.x.min(bottom_right.x) - padding;
-    let visible_right = top_left.x.max(bottom_right.x) + padding;
-    let visible_top = top_left.y.min(bottom_right.y) - padding;
-    let visible_bottom = top_left.y.max(bottom_right.y) + padding;
-
-    drawing_bounds.right >= visible_left
-        && drawing_bounds.left <= visible_right
-        && drawing_bounds.bottom >= visible_top
-        && drawing_bounds.top <= visible_bottom
+    let padding = screen_padding / viewport.zoom.max(0.1);
+    CanvasDrawingBounds {
+        left: top_left.x.min(bottom_right.x) - padding,
+        top: top_left.y.min(bottom_right.y) - padding,
+        right: top_left.x.max(bottom_right.x) + padding,
+        bottom: top_left.y.max(bottom_right.y) + padding,
+    }
 }
 
 fn node_visible(screen_position: WorldPoint, node_size: WorldSize, canvas_size: WorldSize) -> bool {
@@ -684,20 +680,21 @@ fn render_text_boxes(
     workspace_id: usize,
     active_tool: CanvasDrawingTool,
     canvas_size: WorldSize,
-    text_box_inputs: &HashMap<(usize, usize), Entity<InputState>>,
-    cx: &mut Context<PiDesktop>,
+    text_box_inputs: &HashMap<usize, Entity<InputState>>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> Vec<AnyElement> {
     let viewport = canvas.viewport();
     let selected_index = canvas.selected_drawing_index();
+    let visible_bounds = visible_world_bounds(viewport, canvas_size, 56.0);
     canvas
-        .drawings()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, drawing)| {
+        .drawing_indices_in_bounds(&visible_bounds)
+        .into_iter()
+        .filter_map(|index| {
+            let drawing = canvas.drawings().get(index)?;
             let CanvasDrawing::TextBox { start, end, .. } = drawing else {
                 return None;
             };
-            let input = text_box_inputs.get(&(workspace_id, index))?.clone();
+            let input = text_box_inputs.get(&index)?.clone();
             let input_for_focus = input.clone();
             let screen_start = viewport.world_to_screen(*start);
             let screen_end = viewport.world_to_screen(*end);
@@ -761,7 +758,7 @@ fn render_text_boxes(
 fn render_text_box_drag_handle(
     drawing_index: usize,
     scale: f32,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> AnyElement {
     div()
         .id(("text-box-drag-handle", drawing_index))

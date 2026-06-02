@@ -239,7 +239,7 @@ impl CanvasDrawingBounds {
         }
     }
 
-    fn padded(&self, amount: f32) -> Self {
+    pub fn padded(&self, amount: f32) -> Self {
         Self {
             left: self.left - amount,
             top: self.top - amount,
@@ -248,11 +248,18 @@ impl CanvasDrawingBounds {
         }
     }
 
-    fn contains(&self, point: WorldPoint) -> bool {
+    pub fn contains(&self, point: WorldPoint) -> bool {
         point.x >= self.left
             && point.x <= self.right
             && point.y >= self.top
             && point.y <= self.bottom
+    }
+
+    pub fn intersects(&self, other: &Self) -> bool {
+        self.right >= other.left
+            && self.left <= other.right
+            && self.bottom >= other.top
+            && self.top <= other.bottom
     }
 }
 

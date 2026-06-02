@@ -13,7 +13,7 @@ use gpui_component::{
     tooltip::Tooltip,
 };
 
-use crate::app::PiDesktop;
+use crate::components::workspace_canvas_view::WorkspaceCanvasView;
 use crate::design::theme;
 use crate::ui;
 use crate::workspace::canvas::CanvasDrawingTool;
@@ -29,7 +29,7 @@ pub(crate) fn render_drawing_tool_overlay(
     can_undo: bool,
     can_redo: bool,
     stroke_slider: Entity<SliderState>,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> AnyElement {
     if !visible {
         return div().into_any_element();
@@ -65,7 +65,7 @@ fn render_drawing_tool_palette(
     can_undo: bool,
     can_redo: bool,
     stroke_slider: Entity<SliderState>,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> AnyElement {
     h_flex()
         .id("drawing-tool-palette")
@@ -150,7 +150,7 @@ fn render_drawing_tool_palette(
 fn drawing_tool_button(
     tool: CanvasDrawingTool,
     active_tool: CanvasDrawingTool,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> AnyElement {
     let selected = tool == active_tool;
     let tool_id: usize = match tool {
@@ -257,7 +257,7 @@ fn history_button(
     tooltip: &'static str,
     enabled: bool,
     undo: bool,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> AnyElement {
     div()
         .id(id)

@@ -1,10 +1,11 @@
 use super::*;
-use crate::components::package_settings::{package_settings_content, PackageSettingsState};
-use crate::components::theme_settings::{theme_settings_content, ThemeSettingsState};
+use crate::components::package_settings::{PackageSettingsState, package_settings_content};
+use crate::components::theme_settings::{ThemeSettingsState, theme_settings_content};
 use gpui_component::PixelsExt as _;
 
 impl Render for PiDesktop {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::instrumentation::record_render("PiDesktop");
         let canvas_size = workspace_canvas_size(window);
         div()
             .size_full()
@@ -30,48 +31,57 @@ impl Render for PiDesktop {
                             .child(self.render_workspace_dialog(dialog, cx))
                     }),
             )
-            .child(bottom_dock::bottom_dock(
-                self.settings_drawer_open,
-                self.snap_to_grid,
-                self.drawing_tools_visible,
-                cx,
-            ))
+            .child(self.render_bottom_dock(cx))
     }
 }
 
 impl PiDesktop {
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .h(px(28.0))
-            .px_2()
-            .child(
-                div()
-                    .id("home-logo")
-                    .p_1()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(theme::surface_hover()))
-                    .on_click(cx.listener(|view, _, _, cx| view.open_landing(cx)))
-                    .child(
-                        svg()
-                            .path(ui::logo_path())
-                            .size_4()
-                            .text_color(theme::text()),
-                    ),
+    fn render_bottom_dock(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let props_changed = self.bottom_dock_view.update(cx, |view, cx| {
+            view.sync(
+                bottom_dock::BottomDockProps {
+                    settings_selected: self.settings_drawer_open,
+                    snap_to_grid: self.snap_to_grid,
+                    drawing_tools_visible: self.drawing_tools_visible,
+                },
+                cx,
             )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(workspace_tabs::workspace_tabs(
-                        &self.workspace_state,
-                        self.previous_workspace_index,
-                        cx,
-                    )),
-            )
-            .child(div().w(px(24.0)))
+        });
+        let bottom_dock = AnyView::from(self.bottom_dock_view.clone());
+
+        div().h(px(BOTTOM_DOCK_HEIGHT)).child(if props_changed {
+            bottom_dock.into_any_element()
+        } else {
+            bottom_dock
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element()
+        })
+    }
+
+    fn render_status_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let props = status_bar::StatusBarProps {
+            tabs: self
+                .workspace_state
+                .tabs()
+                .iter()
+                .map(|tab| workspace_tabs::WorkspaceTabInfo {
+                    title: tab.title().to_owned(),
+                })
+                .collect(),
+            active_index: self.workspace_state.active_index(),
+            previous_index: self.previous_workspace_index,
+        };
+        let props_changed = self
+            .status_bar_view
+            .update(cx, |view, cx| view.sync(props, cx));
+        let status_bar = AnyView::from(self.status_bar_view.clone());
+        div().h(px(STATUS_BAR_HEIGHT)).child(if props_changed {
+            status_bar.into_any_element()
+        } else {
+            status_bar
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element()
+        })
     }
 
     fn render_workspace_stage(
@@ -120,29 +130,44 @@ impl PiDesktop {
         let node_entries = self
             .workspace_state
             .active_tab()
+            .map(|tab| tab.canvas().nodes().to_vec())
+            .unwrap_or_default();
+        let (pinned_node_ids, focused_pinned_node_id) = self
+            .workspace_state
+            .active_tab()
             .map(|tab| {
-                tab.canvas()
-                    .nodes()
-                    .iter()
-                    .map(|node| (node.id(), node.title()))
-                    .collect::<Vec<_>>()
+                (
+                    tab.pinned_layout()
+                        .panels()
+                        .iter()
+                        .map(|panel| panel.node_id())
+                        .collect::<HashSet<_>>(),
+                    tab.pinned_layout().focused_node_id(),
+                )
             })
             .unwrap_or_default();
         let live_node_ids = node_entries
             .iter()
-            .map(|(node_id, _)| *node_id)
+            .map(|node| node.id())
             .collect::<HashSet<_>>();
         self.retain_workspace_node_ui_state(workspace_id, &live_node_ids);
-        for (node_id, title) in node_entries {
+        let mut chat_node_props_changed = false;
+        for node in node_entries {
+            let node_id = node.id();
+            let title = node.title();
             let key = (workspace_id, node_id);
             let transcript = self
                 .chat_transcripts
                 .entry(key)
                 .or_insert_with(|| cx.new(|_| ChatTranscript::default()))
                 .clone();
-            self.chat_body_views.entry(key).or_insert_with(|| {
-                cx.new(|cx| chat_node::ChatBodyView::new(workspace_id, node_id, transcript, cx))
-            });
+            let body_view = self
+                .chat_body_views
+                .entry(key)
+                .or_insert_with(|| {
+                    cx.new(|cx| chat_node::ChatBodyView::new(workspace_id, node_id, transcript, cx))
+                })
+                .clone();
 
             if let std::collections::hash_map::Entry::Vacant(e) = self.chat_inputs.entry(key) {
                 let chat_input = cx.new(|cx| {
@@ -177,7 +202,7 @@ impl PiDesktop {
                 let title_input = cx.new(|cx| {
                     InputState::new(window, cx)
                         .placeholder("Session name")
-                        .default_value(title)
+                        .default_value(title.clone())
                 });
                 let title_subscription = cx.subscribe_in(
                     &title_input,
@@ -195,6 +220,44 @@ impl PiDesktop {
                 self.title_input_subscriptions
                     .insert(key, title_subscription);
             }
+
+            let Some(input) = self.chat_inputs.get(&key).cloned() else {
+                continue;
+            };
+            let Some(title_input) = self.title_inputs.get(&key).cloned() else {
+                continue;
+            };
+            let placement = if pinned_node_ids.contains(&node_id) {
+                chat_node::ChatNodePlacement::Pinned {
+                    focused: focused_pinned_node_id == Some(node_id),
+                }
+            } else {
+                chat_node::ChatNodePlacement::Canvas
+            };
+            let props = chat_node::ChatNodeProps {
+                workspace_id,
+                node_id,
+                title,
+                pi_working: self.streaming_node == Some(key),
+                input,
+                title_input,
+                body_view,
+                editing_title: self.editing_title == Some(key),
+                placement,
+            };
+            if let Some(view) = self.chat_node_views.get(&key).cloned() {
+                chat_node_props_changed |= view.update(cx, |view, cx| view.sync(props, cx));
+            } else {
+                let app = cx.entity().clone();
+                self.chat_node_views.insert(
+                    key,
+                    cx.new(|cx| chat_node::ChatNodeView::new(app, props, cx)),
+                );
+                chat_node_props_changed = true;
+            }
+        }
+        if chat_node_props_changed {
+            self.chat_node_render_revision = self.chat_node_render_revision.wrapping_add(1);
         }
 
         let text_box_entries = self
@@ -260,7 +323,7 @@ impl PiDesktop {
             }
         }
 
-        let Some(tab) = self.workspace_state.active_tab() else {
+        let Some(tab) = self.workspace_state.active_tab().cloned() else {
             return div()
                 .size_full()
                 .flex()
@@ -277,29 +340,58 @@ impl PiDesktop {
         } else {
             canvas_size
         };
-        let canvas = workspace_canvas::workspace_canvas(
-            tab,
+        let active_text_box_inputs = self
+            .text_box_inputs
+            .iter()
+            .filter_map(|(&(input_workspace_id, drawing_index), input)| {
+                (input_workspace_id == workspace_id).then_some((drawing_index, input.clone()))
+            })
+            .collect::<HashMap<_, _>>();
+        let active_chat_node_views = self
+            .chat_node_views
+            .iter()
+            .filter_map(|(&(node_workspace_id, node_id), node_view)| {
+                (node_workspace_id == workspace_id).then_some((node_id, node_view.clone()))
+            })
+            .collect::<HashMap<_, _>>();
+        let canvas_props = workspace_canvas_view::WorkspaceCanvasProps {
+            tab: tab.clone(),
             workspace_id,
-            self.can_fork_session(),
-            self.can_resume_session(),
-            self.streaming_node,
-            canvas_panel_size,
-            &self.chat_inputs,
-            &self.title_inputs,
-            &self.text_box_inputs,
-            &self.chat_body_views,
-            self.editing_title,
-            self.snap_to_grid,
-            self.drawing_tools_visible,
-            self.active_drawing_tool,
-            self.drawing_stroke_width,
-            self.workspace_state.active_canvas_can_undo_drawing(),
-            self.workspace_state.active_canvas_can_redo_drawing(),
-            self.drawing_stroke_slider.clone(),
-            self.focus_handle.clone(),
-            window,
-            cx,
-        );
+            can_fork: self.can_fork_session(),
+            can_resume: self.can_resume_session(),
+            canvas_size: canvas_panel_size,
+            text_box_inputs: active_text_box_inputs,
+            chat_node_views: active_chat_node_views.clone(),
+            chat_node_render_revision: self.chat_node_render_revision,
+            snap_to_grid: self.snap_to_grid,
+            drawing_tools_visible: self.drawing_tools_visible,
+            active_drawing_tool: self.active_drawing_tool,
+            drawing_stroke_width: self.drawing_stroke_width,
+            can_undo_drawing: self.workspace_state.active_canvas_can_undo_drawing(),
+            can_redo_drawing: self.workspace_state.active_canvas_can_redo_drawing(),
+            drawing_stroke_slider: self.drawing_stroke_slider.clone(),
+            focus_handle: self.focus_handle.clone(),
+        };
+        let (canvas_view, canvas_props_changed) =
+            if let Some(view) = self.workspace_canvas_views.get(&workspace_id).cloned() {
+                let changed = view.update(cx, |view, cx| view.sync(canvas_props, cx));
+                (view, changed)
+            } else {
+                let app = cx.entity().clone();
+                let view =
+                    cx.new(|_| workspace_canvas_view::WorkspaceCanvasView::new(app, canvas_props));
+                self.workspace_canvas_views
+                    .insert(workspace_id, view.clone());
+                (view, true)
+            };
+        let canvas_view = AnyView::from(canvas_view);
+        let canvas = if canvas_props_changed {
+            canvas_view.into_any_element()
+        } else {
+            canvas_view
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element()
+        };
 
         let content = if pinned {
             let pinned_canvas = div()
@@ -319,16 +411,9 @@ impl PiDesktop {
                     resizable_panel()
                         .size(px((canvas_size.width * 0.5).max(320.0)))
                         .child(pinned_panels::pinned_panel_region(
-                            tab,
-                            workspace_id,
-                            self.streaming_node,
+                            &tab,
                             self.pin_panel_state.clone(),
-                            &self.chat_inputs,
-                            &self.title_inputs,
-                            &self.chat_body_views,
-                            self.editing_title,
-                            window,
-                            cx,
+                            &active_chat_node_views,
                         )),
                 )
                 .into_any_element()

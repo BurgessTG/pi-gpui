@@ -297,19 +297,4 @@ impl PiDesktop {
         })
         .detach();
     }
-
-    pub(super) fn request_canvas_render(&mut self, cx: &mut Context<Self>) {
-        if self.canvas_render_scheduled {
-            return;
-        }
-        self.canvas_render_scheduled = true;
-        cx.spawn(async move |this, cx| {
-            Timer::after(FRAME_RENDER_INTERVAL).await;
-            let _ = this.update(cx, |view, cx| {
-                view.canvas_render_scheduled = false;
-                cx.notify();
-            });
-        })
-        .detach();
-    }
 }

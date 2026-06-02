@@ -6,10 +6,10 @@ use std::time::Duration;
 use anyhow::Result;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context, Entity,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, MouseDownEvent,
-    ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Timer, Window, canvas, div, fill, point, px, size, svg,
+    Animation, AnimationExt as _, AnyElement, AnyView, App, AppContext as _, Bounds, Context,
+    Entity, FocusHandle, Focusable, InteractiveElement as _, IntoElement, MouseDownEvent,
+    ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled as _, Subscription, Timer, Window, canvas, div, fill, point, px, size,
 };
 use gpui_component::animation::cubic_bezier;
 use gpui_component::input::{InputEvent, InputState};
@@ -31,8 +31,8 @@ use crate::components::auth_settings::{
 };
 use crate::components::package_settings::InstalledPackagesTableDelegate;
 use crate::components::{
-    bottom_dock, chat_node, file_picker, pinned_panels, workspace_canvas, workspace_launcher,
-    workspace_tabs,
+    bottom_dock, chat_node, file_picker, pinned_panels, status_bar, workspace_canvas,
+    workspace_canvas_view, workspace_launcher, workspace_tabs,
 };
 use crate::design::theme;
 use crate::ui;
@@ -111,6 +111,9 @@ pub struct PiDesktop {
     drawing_stroke_slider: Entity<SliderState>,
     pin_shell_state: Entity<ResizableState>,
     pin_panel_state: Entity<ResizableState>,
+    bottom_dock_view: Entity<bottom_dock::BottomDockView>,
+    status_bar_view: Entity<status_bar::StatusBarView>,
+    workspace_canvas_views: HashMap<usize, Entity<workspace_canvas_view::WorkspaceCanvasView>>,
     chat_inputs: HashMap<(usize, usize), Entity<InputState>>,
     chat_input_subscriptions: HashMap<(usize, usize), Subscription>,
     title_inputs: HashMap<(usize, usize), Entity<InputState>>,
@@ -119,6 +122,8 @@ pub struct PiDesktop {
     text_box_input_subscriptions: HashMap<(usize, usize), Subscription>,
     chat_transcripts: HashMap<(usize, usize), Entity<ChatTranscript>>,
     chat_body_views: HashMap<(usize, usize), Entity<chat_node::ChatBodyView>>,
+    chat_node_views: HashMap<(usize, usize), Entity<chat_node::ChatNodeView>>,
+    chat_node_render_revision: u64,
     streaming_node: Option<(usize, usize)>,
     editing_title: Option<(usize, usize)>,
     editing_text_box: Option<(usize, usize)>,
@@ -199,6 +204,29 @@ impl PiDesktop {
         });
         let pin_shell_state = cx.new(|_| ResizableState::default());
         let pin_panel_state = cx.new(|_| ResizableState::default());
+        let bottom_dock_app = cx.entity().clone();
+        let bottom_dock_view = cx.new(|_| {
+            bottom_dock::BottomDockView::new(
+                bottom_dock_app,
+                bottom_dock::BottomDockProps {
+                    settings_selected: false,
+                    snap_to_grid: true,
+                    drawing_tools_visible: false,
+                },
+            )
+        });
+        let status_bar_app = cx.entity().clone();
+        let status_bar_view = cx.new(|cx| {
+            status_bar::StatusBarView::new(
+                status_bar_app,
+                status_bar::StatusBarProps {
+                    tabs: Vec::new(),
+                    active_index: None,
+                    previous_index: None,
+                },
+                cx,
+            )
+        });
         let drawing_stroke_subscription = cx.subscribe_in(
             &drawing_stroke_slider,
             window,
@@ -247,6 +275,9 @@ impl PiDesktop {
             drawing_stroke_slider,
             pin_shell_state,
             pin_panel_state,
+            bottom_dock_view,
+            status_bar_view,
+            workspace_canvas_views: HashMap::new(),
             chat_inputs: HashMap::new(),
             chat_input_subscriptions: HashMap::new(),
             title_inputs: HashMap::new(),
@@ -255,6 +286,8 @@ impl PiDesktop {
             text_box_input_subscriptions: HashMap::new(),
             chat_transcripts: HashMap::new(),
             chat_body_views: HashMap::new(),
+            chat_node_views: HashMap::new(),
+            chat_node_render_revision: 0,
             streaming_node: None,
             editing_title: None,
             editing_text_box: None,
@@ -356,6 +389,7 @@ impl PiDesktop {
         self.title_input_subscriptions.remove(&key);
         self.chat_transcripts.remove(&key);
         self.chat_body_views.remove(&key);
+        self.chat_node_views.remove(&key);
         if self.streaming_node == Some(key) {
             self.streaming_node = None;
         }
@@ -365,12 +399,14 @@ impl PiDesktop {
     }
 
     fn remove_workspace_ui_state(&mut self, workspace_id: usize) {
+        self.workspace_canvas_views.remove(&workspace_id);
         let node_keys = self
             .chat_inputs
             .keys()
             .chain(self.title_inputs.keys())
             .chain(self.chat_transcripts.keys())
             .chain(self.chat_body_views.keys())
+            .chain(self.chat_node_views.keys())
             .copied()
             .filter(|key| key.0 == workspace_id)
             .collect::<HashSet<_>>();
@@ -404,6 +440,7 @@ impl PiDesktop {
             .chain(self.title_inputs.keys())
             .chain(self.chat_transcripts.keys())
             .chain(self.chat_body_views.keys())
+            .chain(self.chat_node_views.keys())
             .copied()
             .filter(|key| key.0 == workspace_id && !live_node_ids.contains(&key.1))
             .collect::<HashSet<_>>();

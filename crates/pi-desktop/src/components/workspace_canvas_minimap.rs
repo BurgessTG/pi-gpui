@@ -5,7 +5,7 @@ use gpui::{
 };
 use gpui_component::{StyledExt as _, h_flex};
 
-use crate::app::PiDesktop;
+use crate::components::workspace_canvas_view::WorkspaceCanvasView;
 use crate::design::theme;
 use crate::workspace::canvas::{CanvasState, SessionNodePrimitive, WorldPoint, WorldSize};
 
@@ -16,7 +16,7 @@ use super::workspace_canvas::{
 pub(crate) fn render_minimap(
     canvas: &CanvasState,
     canvas_size: WorldSize,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> AnyElement {
     div()
         .id("workspace-minimap")
@@ -45,6 +45,7 @@ pub(crate) fn render_minimap(
             if event.dragging() {
                 view.update_minimap_pan(
                     minimap_local_from_screen(screen_point_from_mouse_move(event), window),
+                    window,
                     cx,
                 );
                 cx.stop_propagation();
@@ -143,7 +144,7 @@ fn render_minimap_viewport(canvas: &CanvasState, canvas_size: WorldSize) -> AnyE
 
 fn render_minimap_controls(
     viewport: crate::workspace::canvas::CanvasViewport,
-    cx: &mut Context<PiDesktop>,
+    cx: &mut Context<WorkspaceCanvasView>,
 ) -> AnyElement {
     h_flex()
         .id("workspace-zoom-controls")

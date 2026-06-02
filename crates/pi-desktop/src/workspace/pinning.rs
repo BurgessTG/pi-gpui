@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::collections::HashSet;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PinnedAxis {
     #[default]
@@ -35,6 +37,7 @@ impl PinnedPanel {
 pub struct PinnedLayout {
     axis: PinnedAxis,
     panels: Vec<PinnedPanel>,
+    pinned_node_ids: HashSet<usize>,
     focused_node_id: Option<usize>,
 }
 
@@ -56,7 +59,7 @@ impl PinnedLayout {
     }
 
     pub fn is_pinned(&self, node_id: usize) -> bool {
-        self.panels.iter().any(|panel| panel.node_id == node_id)
+        self.pinned_node_ids.contains(&node_id)
     }
 
     pub fn pin(&mut self, node_id: usize) -> bool {
@@ -65,6 +68,7 @@ impl PinnedLayout {
             return false;
         }
         self.panels.push(PinnedPanel::new(node_id));
+        self.pinned_node_ids.insert(node_id);
         self.focused_node_id = Some(node_id);
         true
     }
@@ -75,6 +79,7 @@ impl PinnedLayout {
         };
         let removing_focused = self.focused_node_id == Some(node_id);
         self.panels.remove(index);
+        self.pinned_node_ids.remove(&node_id);
         if removing_focused || self.focused_node_id.is_none() {
             self.focused_node_id = next_focus_after_remove(&self.panels, index);
         }
@@ -133,6 +138,9 @@ impl PinnedLayout {
         let before = self.panels.len();
         self.panels.retain(|panel| live_node_ids(panel.node_id));
         let changed = self.panels.len() != before;
+        if changed {
+            self.rebuild_index();
+        }
         if self
             .focused_node_id
             .is_some_and(|node_id| !self.is_pinned(node_id))
@@ -146,6 +154,10 @@ impl PinnedLayout {
         self.panels
             .iter()
             .position(|panel| panel.node_id == node_id)
+    }
+
+    fn rebuild_index(&mut self) {
+        self.pinned_node_ids = self.panels.iter().map(PinnedPanel::node_id).collect();
     }
 }
 

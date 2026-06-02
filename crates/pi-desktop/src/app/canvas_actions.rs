@@ -177,6 +177,7 @@ impl PiDesktop {
     pub(crate) fn update_canvas_drawing(
         &mut self,
         screen_position: WorldPoint,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -184,7 +185,7 @@ impl PiDesktop {
             .update_active_drawing(canvas_local_point(screen_position), self.snap_to_grid)
         {
             cx.stop_propagation();
-            self.request_canvas_render(cx);
+            self.request_canvas_frame_render(window, cx);
         }
     }
 
@@ -197,6 +198,7 @@ impl PiDesktop {
     pub(crate) fn update_canvas_pan(
         &mut self,
         screen_position: WorldPoint,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -204,7 +206,7 @@ impl PiDesktop {
             .update_active_drawing_drag(canvas_local_point(screen_position), self.snap_to_grid)
         {
             cx.stop_propagation();
-            self.request_canvas_render(cx);
+            self.request_canvas_frame_render(window, cx);
             return;
         }
         if self
@@ -212,7 +214,7 @@ impl PiDesktop {
             .update_active_node_resize(canvas_local_point(screen_position))
         {
             cx.stop_propagation();
-            self.request_canvas_render(cx);
+            self.request_canvas_frame_render(window, cx);
             return;
         }
         if self
@@ -220,7 +222,7 @@ impl PiDesktop {
             .update_active_node_drag(canvas_local_point(screen_position), self.snap_to_grid)
         {
             cx.stop_propagation();
-            self.request_canvas_render(cx);
+            self.request_canvas_frame_render(window, cx);
             return;
         }
         if self
@@ -228,7 +230,7 @@ impl PiDesktop {
             .update_active_canvas_pan(canvas_local_point(screen_position))
         {
             cx.stop_propagation();
-            self.request_canvas_render(cx);
+            self.request_canvas_frame_render(window, cx);
         }
     }
 
@@ -324,13 +326,14 @@ impl PiDesktop {
     pub(crate) fn update_minimap_pan(
         &mut self,
         local_position: WorldPoint,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         if self
             .workspace_state
             .update_active_minimap_pan(local_position, minimap_size())
         {
-            self.request_canvas_render(cx);
+            self.request_canvas_frame_render(window, cx);
             return true;
         }
 
@@ -347,13 +350,14 @@ impl PiDesktop {
         &mut self,
         screen_position: WorldPoint,
         zoom_factor: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self
             .workspace_state
             .zoom_active_canvas_by_at(zoom_factor, canvas_local_point(screen_position))
         {
-            self.request_canvas_render(cx);
+            self.request_canvas_frame_render(window, cx);
         }
     }
 
@@ -367,5 +371,19 @@ impl PiDesktop {
         if self.workspace_state.zoom_active_canvas_out() {
             cx.notify();
         }
+    }
+
+    fn request_canvas_frame_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.canvas_render_scheduled {
+            return;
+        }
+        self.canvas_render_scheduled = true;
+        let view = cx.entity().clone();
+        window.on_next_frame(move |_, cx| {
+            view.update(cx, |view, cx| {
+                view.canvas_render_scheduled = false;
+                cx.notify();
+            });
+        });
     }
 }
