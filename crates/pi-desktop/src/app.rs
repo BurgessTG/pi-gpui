@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,6 +81,14 @@ enum WorkspaceDialog {
     OpenWorkspace,
 }
 
+#[derive(Clone)]
+struct QueuedChatPrompt {
+    workspace_id: usize,
+    node_id: usize,
+    session_path: String,
+    text: String,
+}
+
 pub struct PiDesktop {
     focus_handle: FocusHandle,
     settings_drawer_open: bool,
@@ -124,6 +132,7 @@ pub struct PiDesktop {
     chat_body_views: HashMap<(usize, usize), Entity<chat_node::ChatBodyView>>,
     chat_node_views: HashMap<(usize, usize), Entity<chat_node::ChatNodeView>>,
     chat_node_render_revision: u64,
+    queued_chat_prompts: VecDeque<QueuedChatPrompt>,
     streaming_node: Option<(usize, usize)>,
     editing_title: Option<(usize, usize)>,
     editing_text_box: Option<(usize, usize)>,
@@ -288,6 +297,7 @@ impl PiDesktop {
             chat_body_views: HashMap::new(),
             chat_node_views: HashMap::new(),
             chat_node_render_revision: 0,
+            queued_chat_prompts: VecDeque::new(),
             streaming_node: None,
             editing_title: None,
             editing_text_box: None,

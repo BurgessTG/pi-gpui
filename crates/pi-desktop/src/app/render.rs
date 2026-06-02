@@ -132,6 +132,11 @@ impl PiDesktop {
             .active_tab()
             .map(|tab| tab.canvas().nodes().to_vec())
             .unwrap_or_default();
+        let active_canvas_zoom = self
+            .workspace_state
+            .active_tab()
+            .map(|tab| tab.canvas().viewport().zoom)
+            .unwrap_or(1.0);
         let (pinned_node_ids, focused_pinned_node_id) = self
             .workspace_state
             .active_tab()
@@ -238,12 +243,17 @@ impl PiDesktop {
                 workspace_id,
                 node_id,
                 title,
-                pi_working: self.streaming_node == Some(key),
+                pi_working: self.chat_node_working(key),
                 input,
                 title_input,
                 body_view,
                 editing_title: self.editing_title == Some(key),
                 placement,
+                scale: if matches!(placement, chat_node::ChatNodePlacement::Pinned { .. }) {
+                    1.0
+                } else {
+                    active_canvas_zoom
+                },
             };
             if let Some(view) = self.chat_node_views.get(&key).cloned() {
                 chat_node_props_changed |= view.update(cx, |view, cx| view.sync(props, cx));

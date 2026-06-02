@@ -378,11 +378,11 @@ impl PiDesktop {
             return;
         }
         self.canvas_render_scheduled = true;
+        cx.notify();
         let view = cx.entity().clone();
         window.on_next_frame(move |_, cx| {
-            view.update(cx, |view, cx| {
+            view.update(cx, |view, _cx| {
                 view.canvas_render_scheduled = false;
-                cx.notify();
             });
         });
     }

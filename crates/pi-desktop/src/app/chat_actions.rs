@@ -1,6 +1,14 @@
 use super::*;
 
 impl PiDesktop {
+    pub(super) fn chat_node_working(&self, key: (usize, usize)) -> bool {
+        self.streaming_node == Some(key)
+            || self
+                .queued_chat_prompts
+                .iter()
+                .any(|prompt| (prompt.workspace_id, prompt.node_id) == key)
+    }
+
     pub(crate) fn submit_chat_node_from_enter(
         &mut self,
         workspace_id: usize,
@@ -31,11 +39,6 @@ impl PiDesktop {
             cx.notify();
             return;
         }
-        if self.pending || self.streaming_node.is_some() {
-            self.status = "Pi is busy; wait for the current stream to finish.".into();
-            cx.notify();
-            return;
-        }
         let Some(session) = self.backend.clone() else {
             self.status = "Embedded Pi backend is not ready yet.".into();
             cx.notify();
@@ -57,63 +60,143 @@ impl PiDesktop {
             cx.notify();
             return;
         };
+        if self.streaming_node.is_none() && self.pending {
+            self.status = "Pi is busy; wait for the current operation to finish.".into();
+            cx.notify();
+            return;
+        }
 
         input.update(cx, |input, cx| input.set_value("", window, cx));
+        let prompt = QueuedChatPrompt {
+            workspace_id,
+            node_id,
+            session_path,
+            text,
+        };
+        if self.streaming_node.is_some() {
+            self.queued_chat_prompts.push_back(prompt);
+            self.status =
+                format!("Queued chat node #{node_id} behind the active Pi stream.").into();
+            cx.notify();
+            return;
+        }
+        self.start_chat_prompt(prompt, session, cx);
+    }
+
+    fn start_chat_prompt(
+        &mut self,
+        prompt: QueuedChatPrompt,
+        session: Arc<BackendSession>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (prompt.workspace_id, prompt.node_id);
+        let prompt_for_backend = prompt.clone();
         self.update_chat_transcript(key, cx, |transcript| {
-            transcript.push_user_message(text.clone());
+            transcript.push_user_message(prompt.text.clone());
         });
         self.streaming_node = Some(key);
         self.pending = true;
-        self.status = format!("Sending chat node #{node_id} to Pi…").into();
+        self.status = format!("Sending chat node #{} to Pi…", prompt.node_id).into();
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { session.prompt(Some(session_path), text) })
+                .background_spawn(async move {
+                    session.prompt(
+                        Some(prompt_for_backend.session_path),
+                        prompt_for_backend.text,
+                    )
+                })
                 .await;
             let _ = this.update(cx, |view, cx| {
-                view.pending = false;
-                let Some(workspace_index) = view.workspace_index_for_id(workspace_id) else {
-                    view.remove_session_node_ui_state(workspace_id, node_id);
-                    view.status = "Pi chat response arrived after its workspace was closed.".into();
-                    cx.notify();
-                    return;
-                };
-                if view.session_node_title(workspace_index, node_id).is_none() {
-                    view.remove_session_node_ui_state(workspace_id, node_id);
-                    view.status = "Pi chat response arrived after its node was closed.".into();
-                    cx.notify();
-                    return;
-                }
-                match result {
-                    Ok(data) => {
-                        let metadata = data
-                            .state
-                            .as_ref()
-                            .map(session_node_metadata)
-                            .unwrap_or_else(empty_session_node_metadata);
-                        view.workspace_state.update_session_node_metadata(
-                            workspace_index,
-                            node_id,
-                            metadata,
-                        );
-                        view.update_chat_transcript(key, cx, ChatTranscript::mark_idle);
-                        view.streaming_node = None;
-                        view.apply_data(data, "Pi chat response complete.", cx);
-                    }
-                    Err(error) => {
-                        let message = format!("Pi chat failed: {error:#}");
-                        view.update_chat_transcript(key, cx, |transcript| {
-                            transcript.mark_error(message.clone());
-                        });
-                        view.streaming_node = None;
-                        view.status = message.into();
-                    }
-                }
+                view.finish_chat_prompt(prompt, result, cx);
+                view.start_next_queued_chat_prompt(cx);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    fn finish_chat_prompt(
+        &mut self,
+        prompt: QueuedChatPrompt,
+        result: anyhow::Result<BackendData>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (prompt.workspace_id, prompt.node_id);
+        self.pending = false;
+        let Some(workspace_index) = self.workspace_index_for_id(prompt.workspace_id) else {
+            self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
+            if self.streaming_node == Some(key) {
+                self.streaming_node = None;
+            }
+            self.status = "Pi chat response arrived after its workspace was closed.".into();
+            return;
+        };
+        if self
+            .session_node_title(workspace_index, prompt.node_id)
+            .is_none()
+        {
+            self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
+            if self.streaming_node == Some(key) {
+                self.streaming_node = None;
+            }
+            self.status = "Pi chat response arrived after its node was closed.".into();
+            return;
+        }
+        match result {
+            Ok(data) => {
+                let metadata = data
+                    .state
+                    .as_ref()
+                    .map(session_node_metadata)
+                    .unwrap_or_else(empty_session_node_metadata);
+                self.workspace_state.update_session_node_metadata(
+                    workspace_index,
+                    prompt.node_id,
+                    metadata,
+                );
+                self.update_chat_transcript(key, cx, ChatTranscript::mark_idle);
+                if self.streaming_node == Some(key) {
+                    self.streaming_node = None;
+                }
+                self.apply_data(data, "Pi chat response complete.", cx);
+            }
+            Err(error) => {
+                let message = format!("Pi chat failed: {error:#}");
+                self.update_chat_transcript(key, cx, |transcript| {
+                    transcript.mark_error(message.clone());
+                });
+                if self.streaming_node == Some(key) {
+                    self.streaming_node = None;
+                }
+                self.status = message.into();
+            }
+        }
+    }
+
+    fn start_next_queued_chat_prompt(&mut self, cx: &mut Context<Self>) {
+        if self.streaming_node.is_some() || self.pending {
+            return;
+        }
+        let Some(session) = self.backend.clone() else {
+            return;
+        };
+        while let Some(prompt) = self.queued_chat_prompts.pop_front() {
+            let Some(workspace_index) = self.workspace_index_for_id(prompt.workspace_id) else {
+                self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
+                continue;
+            };
+            if self
+                .session_node_title(workspace_index, prompt.node_id)
+                .is_none()
+            {
+                self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
+                continue;
+            }
+            self.start_chat_prompt(prompt, session, cx);
+            return;
+        }
     }
 
     pub(crate) fn start_session_title_edit(

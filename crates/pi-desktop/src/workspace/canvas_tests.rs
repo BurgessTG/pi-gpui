@@ -115,7 +115,7 @@ fn minimap_click_jumps_and_drag_controls_viewport() {
 }
 
 #[test]
-fn node_resize_changes_screen_size_and_clamps_minimums() {
+fn node_resize_uses_world_delta_and_clamps_minimums() {
     let mut canvas = CanvasState::new();
     canvas.zoom_by_at(2.0, WorldPoint::new(0.0, 0.0));
     let node_id =
@@ -126,8 +126,8 @@ fn node_resize_changes_screen_size_and_clamps_minimums() {
     assert_eq!(
         canvas.nodes()[0].size(),
         WorldSize::new(
-            SESSION_NODE_DEFAULT_WIDTH + 40.0,
-            SESSION_NODE_DEFAULT_HEIGHT + 60.0
+            SESSION_NODE_DEFAULT_WIDTH + 20.0,
+            SESSION_NODE_DEFAULT_HEIGHT + 30.0
         )
     );
 

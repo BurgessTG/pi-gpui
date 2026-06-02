@@ -192,11 +192,15 @@ pub fn workspace_canvas(
                 return None;
             }
             let screen_position = viewport.world_to_screen(node.position());
-            if !node_visible(screen_position, node.size(), canvas_size) {
+            let node_size = node.size();
+            let screen_size = WorldSize::new(
+                node_size.width * viewport.zoom,
+                node_size.height * viewport.zoom,
+            );
+            if !node_visible(screen_position, screen_size, canvas_size) {
                 return None;
             }
             let node_view = chat_node_views.get(&node.id())?.clone();
-            let node_size = node.size();
             Some(
                 div()
                     .id(SharedString::from(format!(
@@ -206,8 +210,8 @@ pub fn workspace_canvas(
                     .absolute()
                     .left(px(screen_position.x))
                     .top(px(screen_position.y))
-                    .w(px(node_size.width))
-                    .h(px(node_size.height))
+                    .w(px(screen_size.width))
+                    .h(px(screen_size.height))
                     .child(node_view)
                     .into_any_element(),
             )
@@ -235,7 +239,8 @@ fn render_drawings(
     canvas_size: WorldSize,
 ) -> AnyElement {
     let viewport = canvas_state.viewport();
-    let visible_bounds = visible_world_bounds(viewport, canvas_size, stroke_width + 24.0);
+    let visual_stroke_width = stroke_width * viewport.zoom;
+    let visible_bounds = visible_world_bounds(viewport, canvas_size, visual_stroke_width + 24.0);
     let drawings = canvas_state
         .drawing_indices_in_bounds(&visible_bounds)
         .into_iter()
@@ -262,12 +267,12 @@ fn render_drawings(
                     bounds,
                     color,
                     selection_color,
-                    stroke_width,
+                    visual_stroke_width,
                     window,
                 );
             }
             if let Some(draft) = draft.as_ref() {
-                paint_drawing_draft(draft, viewport, bounds, color, stroke_width, window);
+                paint_drawing_draft(draft, viewport, bounds, color, visual_stroke_width, window);
             }
         },
     )
@@ -517,7 +522,7 @@ fn paint_arrow(
     }
     let ux = dx / len;
     let uy = dy / len;
-    let head = 14.0 + stroke_width;
+    let head = 14.0 * viewport.zoom + stroke_width;
     let left = point(
         end.x - px(ux * head - uy * head * 0.55),
         end.y - px(uy * head + ux * head * 0.55),
@@ -685,7 +690,7 @@ fn render_text_boxes(
 ) -> Vec<AnyElement> {
     let viewport = canvas.viewport();
     let selected_index = canvas.selected_drawing_index();
-    let visible_bounds = visible_world_bounds(viewport, canvas_size, 56.0);
+    let visible_bounds = visible_world_bounds(viewport, canvas_size, 56.0 * viewport.zoom);
     canvas
         .drawing_indices_in_bounds(&visible_bounds)
         .into_iter()
@@ -700,13 +705,13 @@ fn render_text_boxes(
             let screen_end = viewport.world_to_screen(*end);
             let left = screen_start.x.min(screen_end.x);
             let top = screen_start.y.min(screen_end.y);
-            let width = (screen_start.x - screen_end.x).abs().max(48.0);
-            let height = (screen_start.y - screen_end.y).abs().max(32.0);
+            let text_scale = viewport.zoom;
+            let width = (screen_start.x - screen_end.x).abs().max(48.0 * text_scale);
+            let height = (screen_start.y - screen_end.y).abs().max(32.0 * text_scale);
             if !screen_rect_visible(left, top, width, height, canvas_size) {
                 return None;
             }
             let selected = selected_index == Some(index);
-            let text_scale = 1.0;
             Some(
                 div()
                     .id(("text-box", index))
@@ -763,8 +768,8 @@ fn render_text_box_drag_handle(
     div()
         .id(("text-box-drag-handle", drawing_index))
         .absolute()
-        .right(px(2.0))
-        .top(px(2.0))
+        .right(px(2.0 * scale))
+        .top(px(2.0 * scale))
         .w(px(18.0 * scale))
         .h(px(18.0 * scale))
         .flex()
@@ -775,7 +780,7 @@ fn render_text_box_drag_handle(
         .bg(theme::surface())
         .cursor_pointer()
         .text_color(theme::text())
-        .text_size(px(12.0))
+        .text_size(px(12.0 * scale))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |view, event: &MouseDownEvent, _window, cx| {
@@ -887,7 +892,7 @@ fn screen_point_from_mouse_down(event: &MouseDownEvent) -> WorldPoint {
     WorldPoint::new(f32::from(event.position.x), f32::from(event.position.y))
 }
 
-fn screen_point_from_mouse_move(event: &MouseMoveEvent) -> WorldPoint {
+pub fn screen_point_from_mouse_move(event: &MouseMoveEvent) -> WorldPoint {
     WorldPoint::new(f32::from(event.position.x), f32::from(event.position.y))
 }
 

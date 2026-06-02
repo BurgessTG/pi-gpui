@@ -30,7 +30,7 @@ Stock Pi RPC sidecar mode is intentionally not used in authored source; Pi Works
   - inline tool cards
   - composer input
   - stable transcript/body view state
-- Zoom-independent node UI: zoom changes world navigation and node placement, not the size/readability of node cards.
+- World-space zoom: at 100% canvas objects render at normal size; zooming out/in scales visible nodes, drawings, text boxes, and markers like an infinite workspace.
 - Hyprland-style pin workflow:
   - pin/unpin nodes from the canvas
   - pinned canvas markers
@@ -50,7 +50,7 @@ Important design points:
 - Streaming events update node-local transcript entities instead of forcing root workspace rerenders.
 - Transcript bodies and message rows are stable GPUI entities.
 - Backend session events are batched before transcript mutation.
-- Canvas zoom does not scale node internals.
+- Canvas zoom scales canvas objects consistently while pinned panels remain full-size UI.
 - Canvas rendering uses culling for drawings, text boxes, markers, and nodes.
 - Grid rendering is painted instead of built from many UI elements.
 - Pinned panels reuse the same full-quality chat node body path.

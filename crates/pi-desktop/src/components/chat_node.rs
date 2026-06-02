@@ -18,29 +18,51 @@ use crate::components::chat_node_indicators::{LoadingBarView, WorkingInputOverla
 use crate::design::theme;
 use crate::ui;
 
+fn same_scale(left: f32, right: f32) -> bool {
+    (left - right).abs() <= f32::EPSILON
+}
+
 pub struct ChatMessageView {
     workspace_id: usize,
     node_id: usize,
     index: usize,
     entry: ChatEntry,
+    scale: f32,
 }
 
 impl ChatMessageView {
-    fn new(workspace_id: usize, node_id: usize, index: usize, entry: ChatEntry) -> Self {
+    fn new(
+        workspace_id: usize,
+        node_id: usize,
+        index: usize,
+        entry: ChatEntry,
+        scale: f32,
+    ) -> Self {
         Self {
             workspace_id,
             node_id,
             index,
             entry,
+            scale,
         }
     }
 
-    fn sync(&mut self, index: usize, entry: ChatEntry, cx: &mut Context<Self>) -> bool {
-        if self.index == index && self.entry == entry {
+    fn sync(&mut self, index: usize, entry: ChatEntry, scale: f32, cx: &mut Context<Self>) -> bool {
+        if self.index == index && self.entry == entry && same_scale(self.scale, scale) {
             return false;
         }
         self.index = index;
         self.entry = entry;
+        self.scale = scale;
+        cx.notify();
+        true
+    }
+
+    fn sync_scale(&mut self, scale: f32, cx: &mut Context<Self>) -> bool {
+        if same_scale(self.scale, scale) {
+            return false;
+        }
+        self.scale = scale;
         cx.notify();
         true
     }
@@ -54,7 +76,7 @@ impl Render for ChatMessageView {
             self.node_id,
             self.index,
             &self.entry,
-            1.0,
+            self.scale,
             window,
             &mut *cx,
         )
@@ -67,6 +89,7 @@ pub struct ChatBodyView {
     transcript: Entity<ChatTranscript>,
     list_state: ListState,
     scroll_revision: u64,
+    scale: f32,
     message_views: Vec<Entity<ChatMessageView>>,
     _transcript_subscription: Subscription,
 }
@@ -84,7 +107,7 @@ impl ChatBodyView {
             .into_iter()
             .enumerate()
             .map(|(index, entry)| {
-                cx.new(|_| ChatMessageView::new(workspace_id, node_id, index, entry))
+                cx.new(|_| ChatMessageView::new(workspace_id, node_id, index, entry, 1.0))
             })
             .collect();
         let transcript_subscription = cx.observe(&transcript, |this, transcript, cx| {
@@ -98,6 +121,7 @@ impl ChatBodyView {
             transcript,
             list_state,
             scroll_revision: 0,
+            scale: 1.0,
             message_views,
             _transcript_subscription: transcript_subscription,
         }
@@ -108,7 +132,8 @@ impl ChatBodyView {
         let shared_len = old_len.min(entries.len());
         for (index, entry) in entries.iter().take(shared_len).cloned().enumerate() {
             if let Some(view) = self.message_views.get(index).cloned() {
-                let changed = view.update(cx, |view, cx| view.sync(index, entry, cx));
+                let scale = self.scale;
+                let changed = view.update(cx, |view, cx| view.sync(index, entry, scale, cx));
                 if changed {
                     self.list_state.splice(index..index + 1, 1);
                 }
@@ -121,13 +146,27 @@ impl ChatBodyView {
         }
         if entries.len() > old_len {
             for (index, entry) in entries.iter().cloned().enumerate().skip(old_len) {
-                self.message_views.push(
-                    cx.new(|_| ChatMessageView::new(self.workspace_id, self.node_id, index, entry)),
-                );
+                self.message_views.push(cx.new(|_| {
+                    ChatMessageView::new(self.workspace_id, self.node_id, index, entry, self.scale)
+                }));
             }
             self.list_state
                 .splice(old_len..old_len, entries.len() - old_len);
         }
+    }
+
+    pub fn sync_scale(&mut self, scale: f32, cx: &mut Context<Self>) -> bool {
+        if same_scale(self.scale, scale) {
+            return false;
+        }
+        self.scale = scale;
+        let item_count = self.message_views.len();
+        for view in self.message_views.iter() {
+            view.update(cx, |view, cx| view.sync_scale(scale, cx));
+        }
+        self.list_state.reset(item_count);
+        cx.notify();
+        true
     }
 }
 
@@ -147,6 +186,7 @@ impl Render for ChatBodyView {
                 entries_empty,
                 streaming,
                 revision,
+                scale: self.scale,
             },
             &self.list_state,
             &mut self.scroll_revision,
@@ -171,6 +211,7 @@ pub struct ChatNodeProps {
     pub body_view: Entity<ChatBodyView>,
     pub editing_title: bool,
     pub placement: ChatNodePlacement,
+    pub scale: f32,
 }
 
 pub struct ChatNodeView {
@@ -182,8 +223,8 @@ pub struct ChatNodeView {
 
 impl ChatNodeView {
     pub fn new(app: Entity<PiDesktop>, props: ChatNodeProps, cx: &mut Context<Self>) -> Self {
-        let loading_bar_view = cx.new(|_| LoadingBarView::new(props.pi_working));
-        let working_overlay_view = cx.new(|_| WorkingInputOverlayView);
+        let loading_bar_view = cx.new(|_| LoadingBarView::new(props.pi_working, props.scale));
+        let working_overlay_view = cx.new(|_| WorkingInputOverlayView::new(props.scale));
         Self {
             app,
             props,
@@ -201,7 +242,8 @@ impl ChatNodeView {
             || self.props.title_input != props.title_input
             || self.props.body_view != props.body_view
             || self.props.editing_title != props.editing_title
-            || self.props.placement != props.placement;
+            || self.props.placement != props.placement
+            || !same_scale(self.props.scale, props.scale);
         if !changed {
             return false;
         }
@@ -216,7 +258,7 @@ impl Render for ChatNodeView {
         crate::instrumentation::record_render("ChatNodeView");
         let node_id = self.props.node_id;
         let workspace_id = self.props.workspace_id;
-        let scale = 1.0;
+        let scale = self.props.scale;
         let pinned = matches!(self.props.placement, ChatNodePlacement::Pinned { .. });
         let focused = matches!(
             self.props.placement,
@@ -226,7 +268,12 @@ impl Render for ChatNodeView {
         let show_working_text =
             self.props.pi_working && self.props.input.read(cx).value().trim().is_empty();
         self.loading_bar_view
-            .update(cx, |view, cx| view.sync(self.props.pi_working, cx));
+            .update(cx, |view, cx| view.sync(self.props.pi_working, scale, cx));
+        self.working_overlay_view
+            .update(cx, |view, cx| view.sync_scale(scale, cx));
+        self.props
+            .body_view
+            .update(cx, |view, cx| view.sync_scale(scale, cx));
 
         div()
             .id(SharedString::from(if pinned {
@@ -245,7 +292,7 @@ impl Render for ChatNodeView {
             })
             .bg(theme::surface())
             .text_color(theme::text())
-            .text_size(px(14.0))
+            .text_size(scaled_px(14.0, scale))
             .flex()
             .flex_col()
             .on_mouse_down(
@@ -262,6 +309,30 @@ impl Render for ChatNodeView {
                                 cx,
                             );
                             cx.stop_propagation();
+                        }
+                    },
+                ),
+            )
+            .on_mouse_move(app_listener(
+                app.clone(),
+                move |view, event: &gpui::MouseMoveEvent, window, cx| {
+                    if !pinned && event.dragging() {
+                        view.update_canvas_pan(
+                            super::workspace_canvas::screen_point_from_mouse_move(event),
+                            window,
+                            cx,
+                        );
+                        cx.stop_propagation();
+                    }
+                },
+            ))
+            .on_mouse_up(
+                MouseButton::Left,
+                app_listener(
+                    app.clone(),
+                    move |view, _event: &gpui::MouseUpEvent, _window, cx| {
+                        if !pinned {
+                            view.end_canvas_pan(cx);
                         }
                     },
                 ),
@@ -455,6 +526,7 @@ struct BodyRenderState {
     entries_empty: bool,
     streaming: bool,
     revision: u64,
+    scale: f32,
 }
 
 fn render_body_contents(
@@ -485,9 +557,9 @@ fn render_body_contents(
             this.child(
                 div()
                     .size_full()
-                    .px(px(16.0))
-                    .py(px(14.0))
-                    .child(render_empty_body(1.0)),
+                    .px(scaled_px(16.0, body.scale))
+                    .py(scaled_px(14.0, body.scale))
+                    .child(render_empty_body(body.scale)),
             )
         })
         .when(!body.entries_empty, |this| {
@@ -495,9 +567,13 @@ fn render_body_contents(
                 list(list_state.clone(), move |index, _window, _cx| {
                     let view = message_views[index].clone();
                     div()
-                        .px(px(16.0))
-                        .pt(if index == 0 { px(14.0) } else { px(0.0) })
-                        .pb(px(14.0))
+                        .px(scaled_px(16.0, body.scale))
+                        .pt(if index == 0 {
+                            scaled_px(14.0, body.scale)
+                        } else {
+                            px(0.0)
+                        })
+                        .pb(scaled_px(14.0, body.scale))
                         .child(view)
                         .into_any_element()
                 })

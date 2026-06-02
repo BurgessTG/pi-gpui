@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -18,6 +18,7 @@ pub struct BackendSession {
     auth_updates: broadcast::Sender<AuthFlowUpdate>,
     event_updates: broadcast::Sender<BridgeEventEnvelope>,
     agent_ready: AtomicBool,
+    session_command_lock: Mutex<()>,
     cwd: PathBuf,
 }
 
@@ -80,6 +81,7 @@ impl BackendSession {
             auth_updates,
             event_updates,
             agent_ready: AtomicBool::new(false),
+            session_command_lock: Mutex::new(()),
             cwd: _cwd,
         });
         let data = BackendData {
@@ -186,6 +188,7 @@ impl BackendSession {
 
     pub fn new_session(&self) -> Result<SessionCommandResult> {
         self.ensure_agent_ready()?;
+        let _guard = self.lock_session_commands();
         let cancelled = self.runtime.block_on(self.client.new_session(None))?;
         Ok(SessionCommandResult {
             data: self.collect_data()?,
@@ -195,6 +198,7 @@ impl BackendSession {
 
     pub fn switch_session(&self, session_path: String) -> Result<SessionCommandResult> {
         self.ensure_agent_ready()?;
+        let _guard = self.lock_session_commands();
         let cancelled = self
             .runtime
             .block_on(self.client.switch_session(session_path, None))?;
@@ -206,6 +210,7 @@ impl BackendSession {
 
     pub fn fork_session(&self, entry_id: String) -> Result<SessionCommandResult> {
         self.ensure_agent_ready()?;
+        let _guard = self.lock_session_commands();
         self.runtime
             .block_on(self.client.fork_session(entry_id, ForkPosition::At))?;
         Ok(SessionCommandResult {
@@ -216,6 +221,7 @@ impl BackendSession {
 
     pub fn prompt(&self, session_path: Option<String>, text: String) -> Result<BackendData> {
         self.ensure_agent_ready()?;
+        let _guard = self.lock_session_commands();
         if let Some(session_path) = session_path {
             let current_path = self
                 .runtime
@@ -240,6 +246,7 @@ impl BackendSession {
         name: String,
     ) -> Result<BackendData> {
         self.ensure_agent_ready()?;
+        let _guard = self.lock_session_commands();
         if let Some(session_path) = session_path {
             let current_path = self
                 .runtime
@@ -253,6 +260,12 @@ impl BackendSession {
         }
         self.runtime.block_on(self.client.set_session_name(name))?;
         self.collect_data()
+    }
+
+    fn lock_session_commands(&self) -> MutexGuard<'_, ()> {
+        self.session_command_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn ensure_agent_ready(&self) -> Result<()> {

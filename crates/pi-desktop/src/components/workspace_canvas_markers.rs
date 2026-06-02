@@ -29,8 +29,9 @@ pub(super) fn render_pinned_markers(
         .filter_map(|node| {
             let screen = viewport.world_to_screen(node.position());
             let size = node.size();
-            let width = size.width;
-            let height = size.height;
+            let scale = viewport.zoom;
+            let width = size.width * scale;
+            let height = size.height * scale;
             if !screen_rect_visible(screen.x, screen.y, width, height, canvas_size) {
                 return None;
             }
@@ -42,8 +43,8 @@ pub(super) fn render_pinned_markers(
                     .absolute()
                     .left(px(screen.x))
                     .top(px(screen.y))
-                    .w(px(width.max(120.0)))
-                    .h(px(height.max(72.0)))
+                    .w(px(width.max(120.0 * scale)))
+                    .h(px(height.max(72.0 * scale)))
                     .border_2()
                     .border_color(if active {
                         theme::accent()
@@ -63,24 +64,24 @@ pub(super) fn render_pinned_markers(
                     .child(
                         div()
                             .absolute()
-                            .top(px(10.0))
-                            .left(px(10.0))
-                            .right(px(10.0))
+                            .top(px(10.0 * scale))
+                            .left(px(10.0 * scale))
+                            .right(px(10.0 * scale))
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
+                            .gap(px(8.0 * scale))
+                            .px(px(8.0 * scale))
+                            .py(px(4.0 * scale))
                             .border_1()
                             .border_color(theme::complement().opacity(0.65))
                             .bg(theme::surface().opacity(0.86))
-                            .text_sm()
+                            .text_size(px(13.0 * scale))
                             .child("📌")
                             .child(div().truncate().child(node.title()))
                             .child(
                                 div()
                                     .ml_auto()
-                                    .text_xs()
+                                    .text_size(px(12.0 * scale))
                                     .text_color(theme::text_muted())
                                     .child("Pinned"),
                             ),
@@ -99,7 +100,7 @@ pub(super) fn render_number_markers(
 ) -> Vec<AnyElement> {
     let viewport = canvas.viewport();
     let selected_index = canvas.selected_drawing_index();
-    let visible_bounds = visible_world_bounds(viewport, canvas_size, 24.0);
+    let visible_bounds = visible_world_bounds(viewport, canvas_size, 24.0 * viewport.zoom);
     canvas
         .drawing_indices_in_bounds(&visible_bounds)
         .into_iter()
@@ -109,7 +110,16 @@ pub(super) fn render_number_markers(
                 return None;
             };
             let screen = viewport.world_to_screen(*position);
-            if !screen_rect_visible(screen.x - 11.0, screen.y - 11.0, 22.0, 22.0, canvas_size) {
+            let scale = viewport.zoom;
+            let radius = 11.0 * scale;
+            let size = 22.0 * scale;
+            if !screen_rect_visible(
+                screen.x - radius,
+                screen.y - radius,
+                size,
+                size,
+                canvas_size,
+            ) {
                 return None;
             }
             let selected = selected_index == Some(index);
@@ -117,9 +127,9 @@ pub(super) fn render_number_markers(
                 div()
                     .id(("number-marker", *number))
                     .absolute()
-                    .left(px(screen.x - 11.0))
-                    .top(px(screen.y - 11.0))
-                    .size(px(22.0))
+                    .left(px(screen.x - radius))
+                    .top(px(screen.y - radius))
+                    .size(px(size))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -131,7 +141,7 @@ pub(super) fn render_number_markers(
                     })
                     .bg(theme::surface())
                     .text_color(theme::text())
-                    .text_xs()
+                    .text_size(px(12.0 * scale))
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,

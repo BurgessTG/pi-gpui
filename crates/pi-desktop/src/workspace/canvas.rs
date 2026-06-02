@@ -340,15 +340,16 @@ impl CanvasState {
         let Some(drag) = self.node_resize_drag else {
             return false;
         };
+        let zoom = self.viewport.zoom.max(0.1);
         let Some(node) = self.node_mut(drag.node_id) else {
             self.node_resize_drag = None;
             return false;
         };
 
         let next_size = WorldSize::new(
-            (drag.start_size.width + (screen_position.x - drag.start_screen.x))
+            (drag.start_size.width + (screen_position.x - drag.start_screen.x) / zoom)
                 .max(SESSION_NODE_MIN_WIDTH),
-            (drag.start_size.height + (screen_position.y - drag.start_screen.y))
+            (drag.start_size.height + (screen_position.y - drag.start_screen.y) / zoom)
                 .max(SESSION_NODE_MIN_HEIGHT),
         );
         if node.size == next_size {
