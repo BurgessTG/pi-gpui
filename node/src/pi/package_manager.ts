@@ -26,6 +26,7 @@ export async function listInstalledPackages(
 			installedPath: pkg.installedPath ?? null,
 			version: metadata.version ?? null,
 			description: metadata.description ?? null,
+			canvasNodes: metadata.canvasNodes ?? [],
 		};
 	});
 }
@@ -97,19 +98,72 @@ function displayNameForSource(source: string): string {
 function readPackageMetadata(installedPath?: string): {
 	version?: string;
 	description?: string;
+	canvasNodes?: InstalledPackage["canvasNodes"];
 } {
-	if (!installedPath) return {};
+	if (!installedPath) return { canvasNodes: [] };
 	try {
 		const packageJson = JSON.parse(
 			readFileSync(join(installedPath, "package.json"), "utf8"),
-		) as { version?: string; description?: string };
+		) as {
+			version?: string;
+			description?: string;
+			pi?: { canvasNodes?: unknown };
+			piCanvasNodes?: unknown;
+		};
 		return Object.fromEntries(
 			Object.entries({
 				version: packageJson.version,
 				description: packageJson.description,
+				canvasNodes: normalizeCanvasNodeManifests(
+					packageJson.pi?.canvasNodes ?? packageJson.piCanvasNodes,
+				),
 			}).filter(([, value]) => value !== undefined),
-		) as { version?: string; description?: string };
+		) as {
+			version?: string;
+			description?: string;
+			canvasNodes?: InstalledPackage["canvasNodes"];
+		};
 	} catch {
-		return {};
+		return { canvasNodes: [] };
 	}
+}
+
+function normalizeCanvasNodeManifests(
+	value: unknown,
+): InstalledPackage["canvasNodes"] {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((entry) => {
+		const manifest = entry as {
+			id?: unknown;
+			label?: unknown;
+			runtime?: unknown;
+			renderMode?: unknown;
+		};
+		if (typeof manifest.id !== "string" || typeof manifest.label !== "string") {
+			return [];
+		}
+		const id = manifest.id.trim();
+		const label = manifest.label.trim();
+		if (!id || !label) return [];
+		return [
+			{
+				id,
+				label,
+				runtime: normalizeCanvasNodeRuntime(manifest.runtime),
+				renderMode: normalizeCanvasNodeRenderMode(manifest.renderMode),
+			},
+		];
+	});
+}
+
+function normalizeCanvasNodeRuntime(
+	value: unknown,
+): InstalledPackage["canvasNodes"][number]["runtime"] {
+	return value === "piSession" || value === "workerProcess" ? value : "none";
+}
+
+function normalizeCanvasNodeRenderMode(
+	value: unknown,
+): InstalledPackage["canvasNodes"][number]["renderMode"] {
+	return value === "sceneOnly" ? "sceneOnly" : "gpuiIsland";
 }

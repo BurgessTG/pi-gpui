@@ -88,6 +88,7 @@ function resourceTypesFromKeywords(keywords: string[] | undefined): string[] {
 		["pi-skill", "skill"],
 		["pi-prompt", "prompt"],
 		["pi-theme", "theme"],
+		["pi-canvas-node", "canvas node"],
 	];
 	const found = keywordMap
 		.filter(([keyword]) => keywords?.includes(keyword))

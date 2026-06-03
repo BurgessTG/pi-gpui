@@ -292,6 +292,9 @@ impl InstalledPackagesTableDelegate {
                 Column::new("version", "Version")
                     .width(px(82.0))
                     .resizable(false),
+                Column::new("nodes", "Nodes")
+                    .width(px(62.0))
+                    .resizable(false),
                 Column::new("path", "Path")
                     .width(px(150.0))
                     .resizable(false),
@@ -386,6 +389,21 @@ impl TableDelegate for InstalledPackagesTableDelegate {
                 col_ix,
             ),
             3 => fade_cell(
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(match package.canvas_nodes.len() {
+                        0 => "—".to_owned(),
+                        count => count.to_string(),
+                    }),
+                is_new,
+                &source,
+                col_ix,
+            ),
+            4 => fade_cell(
                 div()
                     .size_full()
                     .flex()

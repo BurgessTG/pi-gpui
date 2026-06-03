@@ -24,6 +24,7 @@ Complete locally; validated end-to-end.
 - Added env-gated Node worker bridge instrumentation for request/response/event rates, byte totals, stderr lines, invalid stdout, stdout closure, and max pending request depth.
 - Converted tool execution start/update/end transport to typed session tool bridge events and bumped the bridge protocol to v3.
 - Added a first retained-scene canvas materialization plan for session nodes with visible indexed queries and zoomed-out low-detail shells.
+- Added package canvas-node manifest transport from installed package `package.json` metadata (`pi.canvasNodes` / `piCanvasNodes`) and surfaced node counts in the package settings table.
 
 ## Validation
 - `cargo fmt --check`

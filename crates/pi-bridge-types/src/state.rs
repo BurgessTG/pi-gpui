@@ -64,6 +64,34 @@ pub struct InstalledPackage {
     pub installed_path: Option<String>,
     pub version: Option<String>,
     pub description: Option<String>,
+    pub canvas_nodes: Vec<PackageCanvasNodeManifest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageCanvasNodeManifest {
+    pub id: String,
+    pub label: String,
+    pub runtime: PackageCanvasNodeRuntime,
+    pub render_mode: PackageCanvasNodeRenderMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum PackageCanvasNodeRuntime {
+    None,
+    PiSession,
+    WorkerProcess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum PackageCanvasNodeRenderMode {
+    SceneOnly,
+    GpuiIsland,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
