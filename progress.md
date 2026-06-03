@@ -25,6 +25,7 @@ Complete locally; validated end-to-end.
 - Converted tool execution start/update/end transport to typed session tool bridge events and bumped the bridge protocol to v3.
 - Added a first retained-scene canvas materialization plan for session nodes with visible indexed queries and zoomed-out low-detail shells.
 - Added package canvas-node manifest transport from installed package `package.json` metadata (`pi.canvasNodes` / `piCanvasNodes`) and surfaced node counts in the package settings table.
+- Added bounded Node worker IPC backpressure via `NodeProcessHostConfig::max_pending_requests` (default 256) to prevent unbounded pending request growth.
 
 ## Validation
 - `cargo fmt --check`

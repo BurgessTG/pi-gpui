@@ -20,6 +20,7 @@ pub struct NodeProcessHostConfig {
     pub node_path: PathBuf,
     pub process_host_path: PathBuf,
     pub request_timeout: std::time::Duration,
+    pub max_pending_requests: usize,
 }
 
 impl NodeProcessHostConfig {
@@ -28,6 +29,7 @@ impl NodeProcessHostConfig {
             node_path: node_path.into(),
             process_host_path: process_host_path.into(),
             request_timeout: std::time::Duration::from_secs(20 * 60),
+            max_pending_requests: 256,
         }
     }
 }
@@ -40,6 +42,7 @@ pub struct NodeProcessHost {
     events: broadcast::Sender<BridgeEventEnvelope>,
     ready: watch::Receiver<Option<ReadyEvent>>,
     request_timeout: std::time::Duration,
+    max_pending_requests: usize,
 }
 
 impl NodeProcessHost {
@@ -85,6 +88,7 @@ impl NodeProcessHost {
             events,
             ready: ready_rx,
             request_timeout: config.request_timeout,
+            max_pending_requests: config.max_pending_requests.max(1),
         };
         host.wait_until_ready().await?;
         Ok(host)
@@ -120,6 +124,18 @@ impl NodeProcessHost {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let pending_len = {
             let mut pending = self.native.pending.lock();
+            if pending.len() >= self.max_pending_requests {
+                return Err(NodeHostError::Bridge(
+                    BridgeError::new(
+                        BridgeErrorCode::RequestTimedOut,
+                        format!(
+                            "Node worker has too many pending requests ({})",
+                            self.max_pending_requests
+                        ),
+                    )
+                    .retryable(true),
+                ));
+            }
             pending.insert(request_id.clone(), tx);
             pending.len()
         };

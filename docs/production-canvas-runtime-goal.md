@@ -37,6 +37,7 @@ Build Pi Workspaces as an Excalidraw-class infinite canvas where users can creat
 - Tool execution start/update/end now cross the bridge as typed session tool events instead of raw generic session events; protocol version is bumped to 3 for the typed lifecycle/tool delta protocol.
 - Added the first retained-scene materialization plan for session nodes: the canvas queries visible indexed nodes, computes screen bounds, and renders low-detail shells when zoomed too far out instead of materializing every visible node as a full GPUI chat island.
 - Installed packages can now advertise canvas node manifests through `package.json` (`pi.canvasNodes` or `piCanvasNodes`), and installed package data exposes the parsed node count in the package settings table.
+- Node worker IPC now enforces a bounded pending-request limit (`NodeProcessHostConfig::max_pending_requests`, default 256) and returns a retryable backpressure error instead of allowing unbounded request buildup.
 
 ## Next milestones
 
