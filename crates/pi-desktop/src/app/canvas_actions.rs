@@ -380,7 +380,12 @@ impl PiDesktop {
         self.canvas_render_scheduled = true;
         cx.notify();
         let view = cx.entity().clone();
+        let scheduled_at = std::time::Instant::now();
         window.on_next_frame(move |_, cx| {
+            crate::instrumentation::record_frame_latency(
+                "canvas_next_frame",
+                scheduled_at.elapsed(),
+            );
             view.update(cx, |view, _cx| {
                 view.canvas_render_scheduled = false;
             });

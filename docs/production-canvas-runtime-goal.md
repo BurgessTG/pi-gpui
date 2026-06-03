@@ -39,6 +39,7 @@ Build Pi Workspaces as an Excalidraw-class infinite canvas where users can creat
 - Installed packages can now advertise canvas node manifests through `package.json` (`pi.canvasNodes` or `piCanvasNodes`), and installed package data exposes the parsed node count in the package settings table.
 - Node worker IPC now enforces a bounded pending-request limit (`NodeProcessHostConfig::max_pending_requests`, default 256) and returns a retryable backpressure error instead of allowing unbounded request buildup.
 - Pi Desktop now rebuilds the canvas node registry from installed package manifests on backend data refresh, giving package-provided canvas nodes a typed registration path alongside built-in session nodes.
+- Added env-gated next-frame latency instrumentation (`PI_WORKSPACES_FRAME_TRACE=1`) for canvas pan/zoom/input-driven frame scheduling, complementing render and bridge trace counters.
 
 ## Next milestones
 

@@ -27,6 +27,7 @@ Complete locally; validated end-to-end.
 - Added package canvas-node manifest transport from installed package `package.json` metadata (`pi.canvasNodes` / `piCanvasNodes`) and surfaced node counts in the package settings table.
 - Added bounded Node worker IPC backpressure via `NodeProcessHostConfig::max_pending_requests` (default 256) to prevent unbounded pending request growth.
 - Wired installed package canvas-node manifests into Pi Desktop's canvas node registry on backend data refresh.
+- Added env-gated canvas next-frame latency tracing (`PI_WORKSPACES_FRAME_TRACE=1`) to measure pan/zoom/input-driven scheduling latency.
 
 ## Validation
 - `cargo fmt --check`
