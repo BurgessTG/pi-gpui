@@ -33,6 +33,7 @@ Build Pi Workspaces as an Excalidraw-class infinite canvas where users can creat
 - Prompt commands now acknowledge run submission immediately; session run start/finish/error lifecycle crosses the bridge as typed events so long-running prompts no longer hold request/response IPC slots open.
 - The external Node worker host now fails pending requests and emits a fatal backend event if worker stdout closes or fails, and process-host shutdown exits cleanly after disposal.
 - Added a first typed canvas node registry scaffold with built-in Pi session node definitions, runtime requirements, render modes, and package manifest slots to move node creation toward extension/package registration.
+- Added env-gated bridge throughput instrumentation (`PI_WORKSPACES_BRIDGE_TRACE=1`, optional `PI_WORKSPACES_BRIDGE_TRACE_MS`) for request/response/event counts, byte totals, stderr lines, invalid stdout, stdout closure, and max pending request depth.
 
 ## Next milestones
 

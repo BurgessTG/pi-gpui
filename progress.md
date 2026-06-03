@@ -21,6 +21,7 @@ Complete locally; validated end-to-end.
 - Converted prompt submission to immediate ACK plus typed session run lifecycle events (`sessionRunStarted`, `sessionRunFinished`, `sessionRunError`), so long-running agent turns no longer keep bridge requests open.
 - Hardened the external Node worker lifecycle: worker stdout failure now fails pending requests and emits a fatal backend event, and process-host shutdown exits after runtime disposal.
 - Added the first canvas node registry scaffold for package/extensible node definitions, with built-in Pi session nodes carrying runtime and render-mode metadata.
+- Added env-gated Node worker bridge instrumentation for request/response/event rates, byte totals, stderr lines, invalid stdout, stdout closure, and max pending request depth.
 
 ## Validation
 - `cargo fmt --check`

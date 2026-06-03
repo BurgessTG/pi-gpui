@@ -6,6 +6,7 @@ mod error;
 mod host;
 mod native;
 mod process;
+mod process_metrics;
 
 pub use config::NodeHostConfig;
 pub use error::{NodeHostError, Result};

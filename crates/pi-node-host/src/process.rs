@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, watch};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::native::NativeBridgeState;
+use crate::process_metrics::ProcessBridgeMetrics;
 use crate::{NodeHostError, Result};
 
 #[derive(Clone, Debug)]
@@ -35,6 +36,7 @@ pub struct NodeProcessHost {
     child: Arc<Mutex<Child>>,
     stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
     native: Arc<NativeBridgeState>,
+    metrics: Arc<ProcessBridgeMetrics>,
     events: broadcast::Sender<BridgeEventEnvelope>,
     ready: watch::Receiver<Option<ReadyEvent>>,
     request_timeout: std::time::Duration,
@@ -71,13 +73,15 @@ impl NodeProcessHost {
         let (events, _events_rx) = broadcast::channel(1024);
         let (ready_tx, ready_rx) = watch::channel(None);
         let native = Arc::new(NativeBridgeState::new(events.clone(), ready_tx));
-        spawn_stdout_reader(stdout, Arc::clone(&native));
-        spawn_stderr_reader(stderr, events.clone());
+        let metrics = Arc::new(ProcessBridgeMetrics::from_env());
+        spawn_stdout_reader(stdout, Arc::clone(&native), Arc::clone(&metrics));
+        spawn_stderr_reader(stderr, events.clone(), Arc::clone(&metrics));
 
         let host = Self {
             child: Arc::new(Mutex::new(child)),
             stdin: Arc::new(tokio::sync::Mutex::new(stdin)),
             native,
+            metrics,
             events,
             ready: ready_rx,
             request_timeout: config.request_timeout,
@@ -114,9 +118,13 @@ impl NodeProcessHost {
         let request_id = RequestId::new();
         let envelope = BridgeCommandEnvelope::new(request_id.clone(), command);
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.native.pending.lock().insert(request_id.clone(), tx);
+        let pending_len = {
+            let mut pending = self.native.pending.lock();
+            pending.insert(request_id.clone(), tx);
+            pending.len()
+        };
 
-        if let Err(error) = self.dispatch_to_node(&envelope).await {
+        if let Err(error) = self.dispatch_to_node(&envelope, pending_len).await {
             let _removed = self.native.pending.lock().remove(&request_id);
             return Err(error);
         }
@@ -145,9 +153,14 @@ impl NodeProcessHost {
         }
     }
 
-    async fn dispatch_to_node(&self, envelope: &BridgeCommandEnvelope) -> Result<()> {
+    async fn dispatch_to_node(
+        &self,
+        envelope: &BridgeCommandEnvelope,
+        pending_len: usize,
+    ) -> Result<()> {
         self.ensure_child_running()?;
         let line = serde_json::to_string(envelope)?;
+        self.metrics.record_request(line.len(), pending_len);
         let mut stdin = self.stdin.lock().await;
         stdin.write_all(line.as_bytes()).await?;
         stdin.write_all(b"\n").await?;
@@ -169,13 +182,18 @@ impl Drop for NodeProcessHost {
     }
 }
 
-fn spawn_stdout_reader(stdout: tokio::process::ChildStdout, native: Arc<NativeBridgeState>) {
+fn spawn_stdout_reader(
+    stdout: tokio::process::ChildStdout,
+    native: Arc<NativeBridgeState>,
+    metrics: Arc<ProcessBridgeMetrics>,
+) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
         loop {
             match lines.next_line().await {
-                Ok(Some(line)) => handle_stdout_line(&native, &line),
+                Ok(Some(line)) => handle_stdout_line(&native, &metrics, &line),
                 Ok(None) => {
+                    metrics.record_stdout_closed();
                     fail_worker_io(
                         &native,
                         BridgeError::new(
@@ -201,12 +219,13 @@ fn spawn_stdout_reader(stdout: tokio::process::ChildStdout, native: Arc<NativeBr
     });
 }
 
-fn handle_stdout_line(native: &NativeBridgeState, line: &str) {
+fn handle_stdout_line(native: &NativeBridgeState, metrics: &ProcessBridgeMetrics, line: &str) {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return;
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        metrics.record_invalid_stdout();
         native.emit_event(BridgeEventEnvelope::new(BridgeEvent::Log(LogEvent {
             level: LogLevel::Warn,
             message: format!("Ignoring non-JSON Node worker stdout: {trimmed}"),
@@ -214,12 +233,14 @@ fn handle_stdout_line(native: &NativeBridgeState, line: &str) {
         return;
     };
     if value.get("response").is_some() {
+        metrics.record_response(trimmed.len());
         if let Ok(response) = serde_json::from_value(value) {
             native.complete_response(response);
         }
     } else if value.get("event").is_some()
         && let Ok(event) = serde_json::from_value(value)
     {
+        metrics.record_event(trimmed.len());
         native.emit_event(event);
     }
 }
@@ -232,6 +253,7 @@ fn fail_worker_io(native: &NativeBridgeState, error: BridgeError) {
 fn spawn_stderr_reader(
     stderr: tokio::process::ChildStderr,
     events: broadcast::Sender<BridgeEventEnvelope>,
+    metrics: Arc<ProcessBridgeMetrics>,
 ) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
@@ -240,6 +262,7 @@ fn spawn_stderr_reader(
             if message.is_empty() {
                 continue;
             }
+            metrics.record_stderr_line();
             let _send_result = events.send(BridgeEventEnvelope::new(BridgeEvent::Log(LogEvent {
                 level: LogLevel::Info,
                 message: message.to_owned(),
