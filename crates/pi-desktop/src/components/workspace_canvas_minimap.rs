@@ -8,6 +8,7 @@ use gpui_component::{StyledExt as _, h_flex};
 use crate::components::workspace_canvas_view::WorkspaceCanvasView;
 use crate::design::theme;
 use crate::workspace::canvas::{CanvasState, SessionNodePrimitive, WorldPoint, WorldSize};
+use crate::workspace::node_registry::session_node_definition;
 
 use super::workspace_canvas::{
     BOTTOM_DOCK_HEIGHT, MINIMAP_BOTTOM, MINIMAP_HEIGHT, MINIMAP_LEFT, MINIMAP_WIDTH,
@@ -199,11 +200,7 @@ fn zoom_button(
 }
 
 fn node_symbol(primitive: SessionNodePrimitive) -> &'static str {
-    match primitive {
-        SessionNodePrimitive::NewSession => "●",
-        SessionNodePrimitive::ForkSession => "◆",
-        SessionNodePrimitive::ResumeSession => "■",
-    }
+    session_node_definition(primitive).minimap_symbol
 }
 
 fn node_symbol_color(primitive: SessionNodePrimitive) -> gpui::Hsla {

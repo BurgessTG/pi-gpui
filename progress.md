@@ -20,6 +20,7 @@ Complete locally; validated end-to-end.
 - Replaced token-rate full assistant message updates during streaming with coalesced compact `assistant_text_delta` events; final message events still preserve complete markdown/tool fidelity.
 - Converted prompt submission to immediate ACK plus typed session run lifecycle events (`sessionRunStarted`, `sessionRunFinished`, `sessionRunError`), so long-running agent turns no longer keep bridge requests open.
 - Hardened the external Node worker lifecycle: worker stdout failure now fails pending requests and emits a fatal backend event, and process-host shutdown exits after runtime disposal.
+- Added the first canvas node registry scaffold for package/extensible node definitions, with built-in Pi session nodes carrying runtime and render-mode metadata.
 
 ## Validation
 - `cargo fmt --check`

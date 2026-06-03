@@ -1,4 +1,5 @@
 use super::canvas_model::{WorldPoint, WorldSize};
+use super::node_registry::session_node_definition;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -10,19 +11,11 @@ pub enum SessionNodePrimitive {
 
 impl SessionNodePrimitive {
     pub fn label(self) -> &'static str {
-        match self {
-            Self::NewSession => "New session",
-            Self::ForkSession => "Fork session",
-            Self::ResumeSession => "Resume session",
-        }
+        session_node_definition(self).label
     }
 
     pub fn status_label(self) -> &'static str {
-        match self {
-            Self::NewSession => "Pi NewSession",
-            Self::ForkSession => "Pi Fork",
-            Self::ResumeSession => "Pi SwitchSession",
-        }
+        session_node_definition(self).status_label
     }
 }
 

@@ -23,7 +23,7 @@ use crate::components::workspace_canvas_view::WorkspaceCanvasView;
 use crate::design::theme;
 use crate::workspace::canvas::{
     CanvasDrawing, CanvasDrawingBounds, CanvasDrawingDraft, CanvasDrawingTool, CanvasState,
-    CanvasViewport, WorldPoint, WorldSize,
+    CanvasViewport, SessionNodePrimitive, WorldPoint, WorldSize,
 };
 use crate::workspace::canvas_geometry::{DrawingPathCommand, DrawingPathGeometry};
 use crate::workspace::state::WorkspaceTab;
@@ -931,18 +931,18 @@ fn session_node_menu(
         .label("Create session node")
         .separator()
         .menu_with_icon(
-            "New Session",
+            SessionNodePrimitive::NewSession.label(),
             IconName::Plus,
             Box::new(CreateNewSessionNode),
         )
         .menu_with_icon_and_disabled(
-            "Fork Session",
+            SessionNodePrimitive::ForkSession.label(),
             IconName::Redo2,
             Box::new(ForkSessionNode),
             !can_fork,
         )
         .menu_with_icon_and_disabled(
-            "Resume Session",
+            SessionNodePrimitive::ResumeSession.label(),
             IconName::FolderOpen,
             Box::new(ResumeSessionNode),
             !can_resume,
