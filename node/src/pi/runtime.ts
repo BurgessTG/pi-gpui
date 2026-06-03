@@ -55,6 +55,7 @@ type RuntimeServices = {
 	unsubscribe?: () => void;
 	sessionKeys?: Set<string>;
 	pendingMessageUpdate?: unknown;
+	pendingTextDelta?: string | undefined;
 	messageUpdateTimer?: ReturnType<typeof setTimeout> | undefined;
 };
 
@@ -638,7 +639,7 @@ export class PiRuntimeBackend {
 		current.unsubscribe = current.runtime.session.subscribe((event) => {
 			const eventType = (event as { type?: string }).type;
 			if (eventType === "message_update") {
-				this.scheduleMessageUpdate(current, event);
+				this.handleMessageUpdate(current, event);
 				return;
 			}
 			this.flushPendingMessageUpdate(current);
@@ -694,11 +695,39 @@ export class PiRuntimeBackend {
 		);
 	}
 
-	private scheduleMessageUpdate(
-		services: RuntimeServices,
-		event: unknown,
-	): void {
+	private emitSessionTextDelta(services: RuntimeServices, delta: string): void {
+		emitEvent(
+			eventEnvelope({
+				type: "sessionTextDelta",
+				payload: {
+					sessionId: services.runtime.session.sessionId ?? null,
+					sessionFile: services.runtime.session.sessionFile ?? null,
+					delta,
+				},
+			}),
+		);
+	}
+
+	private handleMessageUpdate(services: RuntimeServices, event: unknown): void {
+		const assistantEvent = (
+			event as {
+				assistantMessageEvent?: { type?: string; delta?: unknown };
+			}
+		).assistantMessageEvent;
+		if (
+			assistantEvent?.type === "text_delta" &&
+			typeof assistantEvent.delta === "string"
+		) {
+			services.pendingTextDelta = `${services.pendingTextDelta ?? ""}${assistantEvent.delta}`;
+			this.scheduleMessageUpdateFlush(services);
+			return;
+		}
+		this.flushPendingMessageUpdate(services);
 		services.pendingMessageUpdate = event;
+		this.scheduleMessageUpdateFlush(services);
+	}
+
+	private scheduleMessageUpdateFlush(services: RuntimeServices): void {
 		if (services.messageUpdateTimer) return;
 		services.messageUpdateTimer = setTimeout(() => {
 			services.messageUpdateTimer = undefined;
@@ -707,6 +736,11 @@ export class PiRuntimeBackend {
 	}
 
 	private flushPendingMessageUpdate(services: RuntimeServices): void {
+		const delta = services.pendingTextDelta;
+		if (delta) {
+			services.pendingTextDelta = undefined;
+			this.emitSessionTextDelta(services, delta);
+		}
 		const event = services.pendingMessageUpdate;
 		if (!event) return;
 		services.pendingMessageUpdate = undefined;
@@ -719,6 +753,7 @@ export class PiRuntimeBackend {
 			services.messageUpdateTimer = undefined;
 		}
 		services.pendingMessageUpdate = undefined;
+		services.pendingTextDelta = undefined;
 	}
 
 	private configureRuntimeServices(services: RuntimeServices): void {

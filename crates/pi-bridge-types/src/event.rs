@@ -26,6 +26,15 @@ pub enum BridgeEvent {
         session_file: Option<String>,
         event: serde_json::Value,
     },
+    SessionTextDelta {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(rename = "sessionFile")]
+        #[ts(rename = "sessionFile")]
+        session_file: Option<String>,
+        delta: String,
+    },
     QueueUpdate {
         #[serde(rename = "sessionId")]
         #[ts(rename = "sessionId")]

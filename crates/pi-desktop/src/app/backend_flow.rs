@@ -180,6 +180,19 @@ impl PiDesktop {
                         .or_default()
                         .push(event);
                 }
+                BridgeEvent::SessionTextDelta {
+                    session_id,
+                    session_file,
+                    delta,
+                } => {
+                    session_events
+                        .entry((session_id, session_file))
+                        .or_default()
+                        .push(serde_json::json!({
+                            "type": "assistant_text_delta",
+                            "delta": delta,
+                        }));
+                }
                 event => self.apply_bridge_event(
                     BridgeEventEnvelope {
                         version: envelope.version,
@@ -250,6 +263,21 @@ impl PiDesktop {
                     session_id.as_deref(),
                     session_file.as_deref(),
                     vec![event],
+                    cx,
+                );
+            }
+            BridgeEvent::SessionTextDelta {
+                session_id,
+                session_file,
+                delta,
+            } => {
+                self.apply_session_events(
+                    session_id.as_deref(),
+                    session_file.as_deref(),
+                    vec![serde_json::json!({
+                        "type": "assistant_text_delta",
+                        "delta": delta,
+                    })],
                     cx,
                 );
             }

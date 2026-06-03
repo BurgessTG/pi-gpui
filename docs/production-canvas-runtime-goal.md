@@ -29,7 +29,7 @@ Build Pi Workspaces as an Excalidraw-class infinite canvas where users can creat
 
 - Pi Desktop now starts the Node runtime through an external `node/dist/process_host.js` JSONL process host by default.
 - The prior embedded libnode host remains in the codebase for tests and fallback work, but it is no longer the default desktop runtime boundary.
-- Streaming `message_update` events are coalesced before crossing into Rust, then grouped by session target before GPUI transcript updates.
+- Streaming assistant text now crosses into Rust as coalesced compact `assistant_text_delta` events instead of repeated full growing assistant message snapshots; final message events still preserve markdown/tool fidelity.
 
 ## Next milestones
 

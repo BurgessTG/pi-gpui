@@ -13,12 +13,15 @@ globalThis.__PI_GPUI_NATIVE = {
 	emitResponse: (json: string) => writeJsonLine(JSON.parse(json) as unknown),
 };
 
-const [{ bridgeDispatcher }, { eventEnvelope, PROTOCOL_VERSION }, { piVersion }] =
-	await Promise.all([
-		import("./bridge/dispatcher.js"),
-		import("./bridge/envelope.js"),
-		import("./pi/runtime.js"),
-	]);
+const [
+	{ bridgeDispatcher },
+	{ eventEnvelope, PROTOCOL_VERSION },
+	{ piVersion },
+] = await Promise.all([
+	import("./bridge/dispatcher.js"),
+	import("./bridge/envelope.js"),
+	import("./pi/runtime.js"),
+]);
 
 globalThis.__piBridge = bridgeDispatcher;
 

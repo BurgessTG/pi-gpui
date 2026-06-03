@@ -36,9 +36,17 @@ fn reducer_extracts_text_deltas() -> Result<(), Box<dyn std::error::Error>> {
             "assistantMessageEvent": { "type": "text_delta", "delta": "hello" }
         }),
     }))?;
+    state.apply_event(BridgeEventEnvelope::new(BridgeEvent::SessionTextDelta {
+        session_id: None,
+        session_file: None,
+        delta: " world".to_owned(),
+    }))?;
     assert_eq!(
         state.transcript,
-        vec![TranscriptItem::TextDelta("hello".to_owned())]
+        vec![
+            TranscriptItem::TextDelta("hello".to_owned()),
+            TranscriptItem::TextDelta(" world".to_owned()),
+        ]
     );
     Ok(())
 }

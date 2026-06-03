@@ -24,6 +24,9 @@ impl ApplyEvent for BackendState {
             BridgeEvent::Diagnostics { diagnostics } => self.snapshot.diagnostics = diagnostics,
             BridgeEvent::StateSnapshot { state } => self.snapshot = state,
             BridgeEvent::PiSessionEvent { event, .. } => self.apply_session_event(event),
+            BridgeEvent::SessionTextDelta { delta, .. } => {
+                self.transcript.push(TranscriptItem::TextDelta(delta));
+            }
             BridgeEvent::QueueUpdate { queue, .. } => self.snapshot.queue = queue,
             BridgeEvent::BashChunk { chunk } => self.bash_chunks.push(chunk),
             BridgeEvent::ExtensionUiRequest { request } => self.store_ui_request(request),

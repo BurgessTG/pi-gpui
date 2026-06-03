@@ -90,6 +90,7 @@ impl ChatTranscript {
             }
             "agent_end" => self.mark_idle(),
             "message_start" => self.observe_message_start(event.get("message")),
+            "assistant_text_delta" => self.observe_assistant_text_delta(event),
             "message_update" => self.observe_message_update(event.get("message")),
             "message_end" => self.observe_message_end(event.get("message")),
             "tool_execution_start" => self.observe_tool_start(event),
@@ -260,6 +261,19 @@ impl ChatTranscript {
             ToolStatus::Complete
         };
         self.upsert_tool(id, name, String::new(), output, status);
+    }
+
+    fn observe_assistant_text_delta(&mut self, event: &Value) {
+        let Some(delta) = value_string(event, "delta").filter(|delta| !delta.is_empty()) else {
+            return;
+        };
+        self.streaming = true;
+        let index = self.ensure_assistant_index();
+        if let Some(ChatEntry::Assistant { text, status }) = self.entries.get_mut(index) {
+            text.push_str(&delta);
+            *status = AssistantStatus::Streaming;
+            self.bump_revision();
+        }
     }
 
     fn update_assistant_from_message(&mut self, message: &Value, status: AssistantStatus) {
@@ -513,6 +527,31 @@ mod tests {
         if let Some(ChatEntry::Tool(tool)) = tool {
             assert_eq!(tool.status, ToolStatus::Running);
         }
+    }
+
+    #[test]
+    fn transcript_appends_compact_assistant_text_deltas() {
+        let mut transcript = ChatTranscript::default();
+        transcript.observe_session_event(&serde_json::json!({
+            "type": "agent_start"
+        }));
+        transcript.observe_session_event(&serde_json::json!({
+            "type": "assistant_text_delta",
+            "delta": "hi"
+        }));
+        transcript.observe_session_event(&serde_json::json!({
+            "type": "assistant_text_delta",
+            "delta": " there"
+        }));
+
+        assert_eq!(
+            transcript.entries(),
+            &[ChatEntry::Assistant {
+                text: "hi there".to_owned(),
+                status: AssistantStatus::Streaming,
+            }]
+        );
+        assert!(transcript.is_streaming());
     }
 
     #[test]
