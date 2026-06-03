@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use pi_bridge_types::{InstalledPackage, PackageCanvasNodeRenderMode, PackageCanvasNodeRuntime};
+
 use super::canvas_session::SessionNodePrimitive;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +47,17 @@ pub struct CanvasNodeRegistry {
 impl CanvasNodeRegistry {
     pub fn with_builtins() -> Self {
         let mut registry = Self::default();
+        registry.register_builtins();
+        registry
+    }
+
+    pub fn with_installed_packages(packages: &[InstalledPackage]) -> Self {
+        let mut registry = Self::with_builtins();
+        registry.register_installed_packages(packages);
+        registry
+    }
+
+    fn register_builtins(&mut self) {
         for definition in BUILTIN_SESSION_NODE_DEFINITIONS {
             let manifest = CanvasNodeManifest {
                 id: definition.id.to_owned(),
@@ -53,9 +66,22 @@ impl CanvasNodeRegistry {
                 runtime: definition.runtime,
                 render_mode: definition.render_mode,
             };
-            let _inserted = registry.register(manifest);
+            let _inserted = self.register(manifest);
         }
-        registry
+    }
+
+    fn register_installed_packages(&mut self, packages: &[InstalledPackage]) {
+        for package in packages {
+            for manifest in &package.canvas_nodes {
+                let _inserted = self.register(CanvasNodeManifest {
+                    id: manifest.id.clone(),
+                    label: manifest.label.clone(),
+                    package: Some(package.display_name.clone()),
+                    runtime: canvas_node_runtime(manifest.runtime),
+                    render_mode: canvas_node_render_mode(manifest.render_mode),
+                });
+            }
+        }
     }
 
     pub fn register(&mut self, manifest: CanvasNodeManifest) -> bool {
@@ -114,6 +140,21 @@ pub const BUILTIN_SESSION_NODE_DEFINITIONS: [CanvasNodeDefinition; 3] = [
     },
 ];
 
+fn canvas_node_runtime(runtime: PackageCanvasNodeRuntime) -> CanvasNodeRuntime {
+    match runtime {
+        PackageCanvasNodeRuntime::None => CanvasNodeRuntime::None,
+        PackageCanvasNodeRuntime::PiSession => CanvasNodeRuntime::PiSession,
+        PackageCanvasNodeRuntime::WorkerProcess => CanvasNodeRuntime::WorkerProcess,
+    }
+}
+
+fn canvas_node_render_mode(render_mode: PackageCanvasNodeRenderMode) -> CanvasNodeRenderMode {
+    match render_mode {
+        PackageCanvasNodeRenderMode::SceneOnly => CanvasNodeRenderMode::SceneOnly,
+        PackageCanvasNodeRenderMode::GpuiIsland => CanvasNodeRenderMode::GpuiIsland,
+    }
+}
+
 pub fn session_node_definition(primitive: SessionNodePrimitive) -> &'static CanvasNodeDefinition {
     BUILTIN_SESSION_NODE_DEFINITIONS
         .iter()
@@ -132,6 +173,38 @@ mod tests {
         assert!(registry.get("pi.session.new").is_some());
         assert!(registry.get("pi.session.fork").is_some());
         assert!(registry.get("pi.session.resume").is_some());
+    }
+
+    #[test]
+    fn registry_imports_installed_package_node_manifests() {
+        let package = InstalledPackage {
+            source: "npm:pi-canvas-demo".to_owned(),
+            display_name: "pi-canvas-demo".to_owned(),
+            scope: pi_bridge_types::PackageScope::Project,
+            filtered: false,
+            installed_path: None,
+            version: Some("1.0.0".to_owned()),
+            description: None,
+            canvas_nodes: vec![pi_bridge_types::PackageCanvasNodeManifest {
+                id: "demo.worker".to_owned(),
+                label: "Demo worker".to_owned(),
+                runtime: PackageCanvasNodeRuntime::WorkerProcess,
+                render_mode: PackageCanvasNodeRenderMode::SceneOnly,
+            }],
+        };
+
+        let registry = CanvasNodeRegistry::with_installed_packages(&[package]);
+        let manifest = registry.get("demo.worker");
+
+        assert_eq!(registry.len(), 4);
+        assert_eq!(
+            manifest.and_then(|manifest| manifest.package.as_deref()),
+            Some("pi-canvas-demo")
+        );
+        if let Some(manifest) = manifest {
+            assert_eq!(manifest.runtime, CanvasNodeRuntime::WorkerProcess);
+            assert_eq!(manifest.render_mode, CanvasNodeRenderMode::SceneOnly);
+        }
     }
 
     #[test]

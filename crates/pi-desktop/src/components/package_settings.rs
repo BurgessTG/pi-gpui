@@ -24,6 +24,7 @@ pub(crate) struct PackageSettingsState {
     pub(crate) removing_source: Option<String>,
     pub(crate) new_installed_source: Option<String>,
     pub(crate) pending: bool,
+    pub(crate) canvas_node_count: usize,
 }
 
 pub(crate) fn package_settings_content(
@@ -122,7 +123,11 @@ pub(crate) fn package_settings_content(
                 .gap_3()
                 .child(section_header(
                     "Installed packages",
-                    "User and project packages currently configured for Pi.",
+                    if state.canvas_node_count == 0 {
+                        "User and project packages currently configured for Pi."
+                    } else {
+                        "User and project packages currently configured for Pi, including canvas node manifests."
+                    },
                 ))
                 .child(
                     div()

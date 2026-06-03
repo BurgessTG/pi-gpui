@@ -40,6 +40,7 @@ use crate::workspace::canvas::{
     CanvasDrawing, CanvasDrawingTool, SessionNodeMetadata, SessionNodePrimitive, WorldPoint,
     WorldSize,
 };
+use crate::workspace::node_registry::CanvasNodeRegistry;
 use crate::workspace::picker::{self, DEFAULT_DIRECTORY_DEPTH};
 use crate::workspace::state::WorkspaceState;
 
@@ -109,6 +110,7 @@ pub struct PiDesktop {
     removing_package: Option<String>,
     new_installed_package: Option<String>,
     installed_packages_table: Entity<TableState<InstalledPackagesTableDelegate>>,
+    canvas_node_registry: CanvasNodeRegistry,
     workspace_name_input: Entity<InputState>,
     new_folder_name_input: Entity<InputState>,
     workspace_tree: Entity<TreeState>,
@@ -274,6 +276,7 @@ impl PiDesktop {
             removing_package: None,
             new_installed_package: None,
             installed_packages_table,
+            canvas_node_registry: CanvasNodeRegistry::with_builtins(),
             workspace_name_input,
             new_folder_name_input,
             workspace_tree,

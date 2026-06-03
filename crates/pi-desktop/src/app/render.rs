@@ -571,6 +571,7 @@ impl PiDesktop {
         let package_search_input = self.package_search_input.clone();
         let installed_packages_table = self.installed_packages_table.clone();
         let package_pending = self.package_pending;
+        let canvas_node_count = self.canvas_node_registry.len();
         let installing_package = self.installing_package.clone();
         let removing_package = self.removing_package.clone();
         let new_installed_package = self.new_installed_package.clone();
@@ -615,6 +616,7 @@ impl PiDesktop {
                                     removing_source: removing_package.clone(),
                                     new_installed_source: new_installed_package.clone(),
                                     pending: package_pending,
+                                    canvas_node_count,
                                 },
                                 package_search_input.clone(),
                                 installed_packages_table.clone(),

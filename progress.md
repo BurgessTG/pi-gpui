@@ -26,6 +26,7 @@ Complete locally; validated end-to-end.
 - Added a first retained-scene canvas materialization plan for session nodes with visible indexed queries and zoomed-out low-detail shells.
 - Added package canvas-node manifest transport from installed package `package.json` metadata (`pi.canvasNodes` / `piCanvasNodes`) and surfaced node counts in the package settings table.
 - Added bounded Node worker IPC backpressure via `NodeProcessHostConfig::max_pending_requests` (default 256) to prevent unbounded pending request growth.
+- Wired installed package canvas-node manifests into Pi Desktop's canvas node registry on backend data refresh.
 
 ## Validation
 - `cargo fmt --check`

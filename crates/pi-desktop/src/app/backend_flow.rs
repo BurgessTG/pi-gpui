@@ -499,6 +499,7 @@ impl PiDesktop {
             self.workspace_state.sync_session_metadata(&metadata);
             self.hydrate_chat_transcripts_from_state(&metadata, &state.messages, cx);
         }
+        self.canvas_node_registry = CanvasNodeRegistry::with_installed_packages(&data.packages);
         self.data = Some(data);
         self.status = status.into();
     }

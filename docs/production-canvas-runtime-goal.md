@@ -38,6 +38,7 @@ Build Pi Workspaces as an Excalidraw-class infinite canvas where users can creat
 - Added the first retained-scene materialization plan for session nodes: the canvas queries visible indexed nodes, computes screen bounds, and renders low-detail shells when zoomed too far out instead of materializing every visible node as a full GPUI chat island.
 - Installed packages can now advertise canvas node manifests through `package.json` (`pi.canvasNodes` or `piCanvasNodes`), and installed package data exposes the parsed node count in the package settings table.
 - Node worker IPC now enforces a bounded pending-request limit (`NodeProcessHostConfig::max_pending_requests`, default 256) and returns a retryable backpressure error instead of allowing unbounded request buildup.
+- Pi Desktop now rebuilds the canvas node registry from installed package manifests on backend data refresh, giving package-provided canvas nodes a typed registration path alongside built-in session nodes.
 
 ## Next milestones
 
