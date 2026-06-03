@@ -221,6 +221,38 @@ impl CanvasViewport {
         self.pan_x = viewport_size.width / 2.0 - world_position.x * self.zoom;
         self.pan_y = viewport_size.height / 2.0 - world_position.y * self.zoom;
     }
+
+    pub fn visible_world_bounds(
+        self,
+        canvas_size: WorldSize,
+        screen_padding: f32,
+    ) -> CanvasDrawingBounds {
+        let top_left = self.screen_to_world(WorldPoint::new(0.0, 0.0));
+        let bottom_right =
+            self.screen_to_world(WorldPoint::new(canvas_size.width, canvas_size.height));
+        let padding = screen_padding / self.zoom.max(0.1);
+        CanvasDrawingBounds {
+            left: top_left.x.min(bottom_right.x) - padding,
+            top: top_left.y.min(bottom_right.y) - padding,
+            right: top_left.x.max(bottom_right.x) + padding,
+            bottom: top_left.y.max(bottom_right.y) + padding,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CanvasNodeRenderLevel {
+    Full,
+    Shell,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasNodeMaterialization {
+    pub node_index: usize,
+    pub node_id: usize,
+    pub screen_position: WorldPoint,
+    pub screen_size: WorldSize,
+    pub render_level: CanvasNodeRenderLevel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -7,7 +7,7 @@ use gpui::{
     actions, canvas, div, fill, point, px, size,
 };
 use gpui_component::{
-    IconName,
+    IconName, StyledExt as _,
     input::{Input, InputState},
     menu::ContextMenuExt as _,
     menu::PopupMenu,
@@ -22,8 +22,9 @@ use crate::components::workspace_canvas_toolbar::render_drawing_tool_overlay;
 use crate::components::workspace_canvas_view::WorkspaceCanvasView;
 use crate::design::theme;
 use crate::workspace::canvas::{
-    CanvasDrawing, CanvasDrawingBounds, CanvasDrawingDraft, CanvasDrawingTool, CanvasState,
-    CanvasViewport, SessionNodePrimitive, WorldPoint, WorldSize,
+    CanvasDrawing, CanvasDrawingBounds, CanvasDrawingDraft, CanvasDrawingTool,
+    CanvasNodeRenderLevel, CanvasState, CanvasViewport, SessionNodePrimitive, WorldPoint,
+    WorldSize,
 };
 use crate::workspace::canvas_geometry::{DrawingPathCommand, DrawingPathGeometry};
 use crate::workspace::state::WorkspaceTab;
@@ -62,7 +63,6 @@ pub fn workspace_canvas(
 ) -> AnyElement {
     let canvas = tab.canvas();
     let pinned_layout = tab.pinned_layout();
-    let viewport = canvas.viewport();
     let menu_focus_handle = focus_handle.clone();
     let drawing_active = drawing_tools_visible && active_drawing_tool.draws();
 
@@ -190,37 +190,34 @@ pub fn workspace_canvas(
         ))
         .children(
             canvas
-                .node_indices_in_bounds(&visible_world_bounds(viewport, canvas_size, 48.0))
+                .node_materialization_plan(canvas_size, 48.0)
                 .into_iter()
-                .filter_map(|index| {
-                    let node = canvas.nodes().get(index)?;
-                    if pinned_layout.is_pinned(node.id()) {
+                .filter_map(|materialized| {
+                    let node = canvas.nodes().get(materialized.node_index)?;
+                    if pinned_layout.is_pinned(materialized.node_id) {
                         return None;
                     }
-                    let screen_position = viewport.world_to_screen(node.position());
-                    let node_size = node.size();
-                    let screen_size = WorldSize::new(
-                        node_size.width * viewport.zoom,
-                        node_size.height * viewport.zoom,
-                    );
-                    if !node_visible(screen_position, screen_size, canvas_size) {
-                        return None;
+                    let frame = div()
+                        .id(SharedString::from(format!(
+                            "chat-node-frame-{workspace_id}-{}",
+                            materialized.node_id
+                        )))
+                        .absolute()
+                        .left(px(materialized.screen_position.x))
+                        .top(px(materialized.screen_position.y))
+                        .w(px(materialized.screen_size.width))
+                        .h(px(materialized.screen_size.height));
+                    match materialized.render_level {
+                        CanvasNodeRenderLevel::Full => {
+                            let node_view = chat_node_views.get(&materialized.node_id)?.clone();
+                            Some(frame.child(node_view).into_any_element())
+                        }
+                        CanvasNodeRenderLevel::Shell => Some(
+                            frame
+                                .child(render_session_node_shell(node.primitive(), node.title()))
+                                .into_any_element(),
+                        ),
                     }
-                    let node_view = chat_node_views.get(&node.id())?.clone();
-                    Some(
-                        div()
-                            .id(SharedString::from(format!(
-                                "chat-node-frame-{workspace_id}-{}",
-                                node.id()
-                            )))
-                            .absolute()
-                            .left(px(screen_position.x))
-                            .top(px(screen_position.y))
-                            .w(px(screen_size.width))
-                            .h(px(screen_size.height))
-                            .child(node_view)
-                            .into_any_element(),
-                    )
                 }),
         )
         .child(render_minimap(canvas, canvas_size, cx))
@@ -237,6 +234,38 @@ pub fn workspace_canvas(
         .context_menu(move |menu, _window, _cx| {
             session_node_menu(menu, menu_focus_handle.clone(), can_fork, can_resume)
         })
+        .into_any_element()
+}
+
+fn render_session_node_shell(primitive: SessionNodePrimitive, title: String) -> AnyElement {
+    div()
+        .size_full()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme::hairline())
+        .bg(theme::surface())
+        .shadow_md()
+        .p_2()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .gap_1()
+        .overflow_hidden()
+        .child(
+            div()
+                .text_xs()
+                .font_bold()
+                .text_color(theme::text())
+                .truncate()
+                .child(title),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme::text_muted())
+                .truncate()
+                .child(primitive.status_label()),
+        )
         .into_any_element()
 }
 
@@ -691,26 +720,7 @@ pub(super) fn visible_world_bounds(
     canvas_size: WorldSize,
     screen_padding: f32,
 ) -> CanvasDrawingBounds {
-    let top_left = viewport.screen_to_world(WorldPoint::new(0.0, 0.0));
-    let bottom_right =
-        viewport.screen_to_world(WorldPoint::new(canvas_size.width, canvas_size.height));
-    let padding = screen_padding / viewport.zoom.max(0.1);
-    CanvasDrawingBounds {
-        left: top_left.x.min(bottom_right.x) - padding,
-        top: top_left.y.min(bottom_right.y) - padding,
-        right: top_left.x.max(bottom_right.x) + padding,
-        bottom: top_left.y.max(bottom_right.y) + padding,
-    }
-}
-
-fn node_visible(screen_position: WorldPoint, node_size: WorldSize, canvas_size: WorldSize) -> bool {
-    screen_rect_visible(
-        screen_position.x,
-        screen_position.y,
-        node_size.width,
-        node_size.height,
-        canvas_size,
-    )
+    viewport.visible_world_bounds(canvas_size, screen_padding)
 }
 
 fn screen_rect_visible(

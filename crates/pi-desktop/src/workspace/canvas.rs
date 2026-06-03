@@ -4,11 +4,14 @@ pub const SESSION_NODE_DEFAULT_WIDTH: f32 = 560.0;
 pub const SESSION_NODE_DEFAULT_HEIGHT: f32 = 420.0;
 pub const SESSION_NODE_MIN_WIDTH: f32 = 320.0;
 pub const SESSION_NODE_MIN_HEIGHT: f32 = 260.0;
+const SESSION_NODE_SHELL_MAX_SCREEN_WIDTH: f32 = 240.0;
+const SESSION_NODE_SHELL_MAX_SCREEN_HEIGHT: f32 = 190.0;
 
 pub use super::canvas_geometry::DrawingPathGeometry;
 pub use super::canvas_model::{
-    CanvasDrawing, CanvasDrawingBounds, CanvasDrawingDraft, CanvasDrawingTool, CanvasViewport,
-    MinimapRect, WorldPoint, WorldSize, snap_world_point,
+    CanvasDrawing, CanvasDrawingBounds, CanvasDrawingDraft, CanvasDrawingTool,
+    CanvasNodeMaterialization, CanvasNodeRenderLevel, CanvasViewport, MinimapRect, WorldPoint,
+    WorldSize, snap_world_point,
 };
 use super::canvas_model::{
     CanvasPanDrag, DRAWING_ERASE_RADIUS, DRAWING_HIT_SCREEN_RADIUS, DrawingDrag,
@@ -79,6 +82,17 @@ fn node_bounds(node: &SessionNode) -> CanvasDrawingBounds {
         right: node.position().x + node.size().width,
         bottom: node.position().y + node.size().height,
     }
+}
+
+fn screen_rect_visible(
+    screen_position: WorldPoint,
+    screen_size: WorldSize,
+    canvas_size: WorldSize,
+) -> bool {
+    screen_position.x + screen_size.width >= 0.0
+        && screen_position.y + screen_size.height >= 0.0
+        && screen_position.x <= canvas_size.width
+        && screen_position.y <= canvas_size.height
 }
 
 impl CanvasState {
@@ -154,6 +168,45 @@ impl CanvasState {
                     .get(*index)
                     .and_then(Option::as_ref)
                     .is_some_and(|node_bounds| node_bounds.intersects(bounds))
+            })
+            .collect()
+    }
+
+    pub fn node_materialization_plan(
+        &self,
+        canvas_size: WorldSize,
+        screen_padding: f32,
+    ) -> Vec<CanvasNodeMaterialization> {
+        let visible_bounds = self
+            .viewport
+            .visible_world_bounds(canvas_size, screen_padding);
+        self.node_indices_in_bounds(&visible_bounds)
+            .into_iter()
+            .filter_map(|node_index| {
+                let node = self.nodes.get(node_index)?;
+                let screen_position = self.viewport.world_to_screen(node.position());
+                let node_size = node.size();
+                let screen_size = WorldSize::new(
+                    node_size.width * self.viewport.zoom,
+                    node_size.height * self.viewport.zoom,
+                );
+                if !screen_rect_visible(screen_position, screen_size, canvas_size) {
+                    return None;
+                }
+                let render_level = if screen_size.width <= SESSION_NODE_SHELL_MAX_SCREEN_WIDTH
+                    || screen_size.height <= SESSION_NODE_SHELL_MAX_SCREEN_HEIGHT
+                {
+                    CanvasNodeRenderLevel::Shell
+                } else {
+                    CanvasNodeRenderLevel::Full
+                };
+                Some(CanvasNodeMaterialization {
+                    node_index,
+                    node_id: node.id(),
+                    screen_position,
+                    screen_size,
+                    render_level,
+                })
             })
             .collect()
     }

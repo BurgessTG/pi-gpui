@@ -23,6 +23,7 @@ Complete locally; validated end-to-end.
 - Added the first canvas node registry scaffold for package/extensible node definitions, with built-in Pi session nodes carrying runtime and render-mode metadata.
 - Added env-gated Node worker bridge instrumentation for request/response/event rates, byte totals, stderr lines, invalid stdout, stdout closure, and max pending request depth.
 - Converted tool execution start/update/end transport to typed session tool bridge events and bumped the bridge protocol to v3.
+- Added a first retained-scene canvas materialization plan for session nodes with visible indexed queries and zoomed-out low-detail shells.
 
 ## Validation
 - `cargo fmt --check`

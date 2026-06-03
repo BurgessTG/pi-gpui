@@ -1,7 +1,7 @@
 use super::canvas::{
-    CanvasDrawing, CanvasDrawingTool, CanvasState, CanvasViewport, SESSION_NODE_DEFAULT_HEIGHT,
-    SESSION_NODE_DEFAULT_WIDTH, SESSION_NODE_MIN_HEIGHT, SESSION_NODE_MIN_WIDTH,
-    SessionNodeMetadata, SessionNodePrimitive, WorldPoint, WorldSize,
+    CanvasDrawing, CanvasDrawingTool, CanvasNodeRenderLevel, CanvasState, CanvasViewport,
+    SESSION_NODE_DEFAULT_HEIGHT, SESSION_NODE_DEFAULT_WIDTH, SESSION_NODE_MIN_HEIGHT,
+    SESSION_NODE_MIN_WIDTH, SessionNodeMetadata, SessionNodePrimitive, WorldPoint, WorldSize,
 };
 
 fn empty_metadata() -> SessionNodeMetadata {
@@ -162,6 +162,31 @@ fn node_resize_uses_world_delta_and_clamps_minimums() {
         WorldSize::new(SESSION_NODE_MIN_WIDTH, SESSION_NODE_MIN_HEIGHT)
     );
     assert!(canvas.end_node_resize());
+}
+
+#[test]
+fn node_materialization_plan_uses_shell_lod_when_zoomed_out() {
+    let mut canvas = CanvasState::new();
+    canvas.add_session_node(SessionNodePrimitive::NewSession, empty_metadata(), false);
+    for _ in 0..100 {
+        canvas.zoom_out();
+    }
+
+    let plan = canvas.node_materialization_plan(WorldSize::new(800.0, 600.0), 48.0);
+
+    assert_eq!(plan.len(), 1);
+    assert_eq!(plan[0].render_level, CanvasNodeRenderLevel::Shell);
+}
+
+#[test]
+fn node_materialization_plan_culls_offscreen_nodes() {
+    let mut canvas = CanvasState::new();
+    canvas.note_context_position(WorldPoint::new(10_000.0, 10_000.0));
+    canvas.add_session_node(SessionNodePrimitive::NewSession, empty_metadata(), false);
+
+    let plan = canvas.node_materialization_plan(WorldSize::new(800.0, 600.0), 48.0);
+
+    assert!(plan.is_empty());
 }
 
 #[test]
