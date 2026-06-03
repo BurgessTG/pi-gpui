@@ -662,7 +662,9 @@ fn chat_event_status(event: &serde_json::Value) -> String {
     match event_type {
         "agent_start" => "Pi is working…".to_owned(),
         "agent_end" => "Pi idle.".to_owned(),
-        "message_start" | "message_update" => "Pi is responding…".to_owned(),
+        "message_start" | "message_update" | "assistant_text_delta" => {
+            "Pi is responding…".to_owned()
+        }
         "message_end" => "Pi response complete.".to_owned(),
         "tool_execution_start" | "tool_execution_update" => format!(
             "Running {}…",
