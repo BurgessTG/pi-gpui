@@ -11,6 +11,24 @@ pub trait BridgeTransport: Send + Sync {
 }
 
 #[derive(Clone)]
+pub struct NodeProcessTransport {
+    host: Arc<pi_node_host::NodeProcessHost>,
+}
+
+impl NodeProcessTransport {
+    pub fn new(host: Arc<pi_node_host::NodeProcessHost>) -> Self {
+        Self { host }
+    }
+}
+
+#[async_trait]
+impl BridgeTransport for NodeProcessTransport {
+    async fn request(&self, command: BridgeCommand) -> Result<BridgeResponse> {
+        Ok(self.host.request(command).await?)
+    }
+}
+
+#[derive(Clone)]
 pub struct NodeHostTransport {
     host: Arc<pi_node_host::NodeHost>,
 }

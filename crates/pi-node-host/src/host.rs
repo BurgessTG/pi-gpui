@@ -179,13 +179,14 @@ impl NodeHost {
         let path_literal = serde_json::to_string(&path)?;
         let instance_id = BOOTSTRAP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let module_literal = serde_json::to_string(NATIVE_MODULE_NAME)?;
+        let protocol_version = pi_bridge_types::PROTOCOL_VERSION;
         let code = format!(
             r#"
             globalThis.__PI_GPUI_NATIVE = process._linkedBinding({module_literal});
             const {{ pathToFileURL }} = require('node:url');
             void import(`${{pathToFileURL({path_literal}).href}}?instance={instance_id}`).catch((error) => {{
               globalThis.__PI_GPUI_NATIVE.emitEvent(JSON.stringify({{
-                version: 1,
+                version: {protocol_version},
                 event: {{
                   type: 'fatalError',
                   payload: {{
@@ -207,6 +208,7 @@ impl NodeHost {
     async fn dispatch_to_node(&self, envelope: &BridgeCommandEnvelope) -> Result<()> {
         let command_json = serde_json::to_string(envelope)?;
         let command_literal = serde_json::to_string(&command_json)?;
+        let protocol_version = pi_bridge_types::PROTOCOL_VERSION;
         let code = format!(
             r#"
             void Promise.resolve()
@@ -214,7 +216,7 @@ impl NodeHost {
               .then(
                 (response) => globalThis.__PI_GPUI_NATIVE.emitResponse(JSON.stringify(response)),
                 (error) => globalThis.__PI_GPUI_NATIVE.emitResponse(JSON.stringify({{
-                  version: 1,
+                  version: {protocol_version},
                   requestId: JSON.parse({command_literal}).requestId,
                   response: {{
                     status: 'error',

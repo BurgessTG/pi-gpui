@@ -5,7 +5,9 @@ mod config;
 mod error;
 mod host;
 mod native;
+mod process;
 
 pub use config::NodeHostConfig;
 pub use error::{NodeHostError, Result};
 pub use host::NodeHost;
+pub use process::{NodeProcessHost, NodeProcessHostConfig};

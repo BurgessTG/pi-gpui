@@ -694,7 +694,10 @@ export class PiRuntimeBackend {
 		);
 	}
 
-	private scheduleMessageUpdate(services: RuntimeServices, event: unknown): void {
+	private scheduleMessageUpdate(
+		services: RuntimeServices,
+		event: unknown,
+	): void {
 		services.pendingMessageUpdate = event;
 		if (services.messageUpdateTimer) return;
 		services.messageUpdateTimer = setTimeout(() => {

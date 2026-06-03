@@ -16,6 +16,7 @@ Complete locally; validated end-to-end.
 - Fixed scroll ownership so node hover/scroll stops wheel propagation to canvas zoom, while canvas wheel zoom remains active on bare canvas.
 - Reduced streaming/runtime jank by batching backend stream events per frame and removing redundant per-session-event global state snapshots from the Node bridge.
 - Added a second performance pass after live lag reports: coalesced SDK `message_update` events in Node before JSON crossing, grouped Rust bridge events by session target across each batch, and deferred markdown rendering for actively streaming assistant text until completion.
+- Started the production architecture goal by moving Pi Desktop's default backend from embedded libnode to an external Node process host over JSONL stdio, keeping GPUI as a UI-only process boundary for the first worker-process runtime slice.
 
 ## Validation
 - `cargo fmt --check`

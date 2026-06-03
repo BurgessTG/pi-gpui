@@ -11,13 +11,13 @@ use pi_bridge_types::{
     AuthFlowUpdate, BridgeEvent, BridgeEventEnvelope, CoreStateSnapshot, ForkPosition, InitCommand,
     InstalledPackage, OAuthLoginMethod, PackageSearchResponse, ProviderAuthStatus, SessionTarget,
 };
-use pi_sdk_bridge::{BridgeClient, NodeHostTransport};
+use pi_sdk_bridge::{BridgeClient, NodeProcessTransport};
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt as _;
 
 pub struct BackendSession {
     runtime: tokio::runtime::Runtime,
-    client: Arc<BridgeClient<NodeHostTransport>>,
+    client: Arc<BridgeClient<NodeProcessTransport>>,
     auth_updates: broadcast::Sender<AuthFlowUpdate>,
     event_updates: broadcast::Sender<BridgeEventEnvelope>,
     agent_ready: AtomicBool,
@@ -49,17 +49,17 @@ impl BackendSession {
             .enable_all()
             .build()
             .context("create frontend backend runtime")?;
-        let bootstrap_path = bootstrap_path()?;
-        let libnode_path = libnode_path();
+        let process_host_path = process_host_path()?;
+        let node_path = node_path();
         let (auth_updates, _) = broadcast::channel(128);
         let (event_updates, _) = broadcast::channel(512);
         let auth_events = auth_updates.clone();
         let bridge_events = event_updates.clone();
         let cwd_for_packages = _cwd.clone();
         let (client, auth, packages) = runtime.block_on(async move {
-            let mut config = pi_node_host::NodeHostConfig::new(libnode_path, bootstrap_path);
+            let mut config = pi_node_host::NodeProcessHostConfig::new(node_path, process_host_path);
             config.request_timeout = Duration::from_secs(20 * 60);
-            let host = Arc::new(pi_node_host::NodeHost::start(config).await?);
+            let host = Arc::new(pi_node_host::NodeProcessHost::start(config).await?);
             let mut events = host.subscribe();
             tokio::spawn(async move {
                 while let Some(Ok(event)) = events.next().await {
@@ -70,7 +70,7 @@ impl BackendSession {
                 }
             });
             host.wait_until_ready().await?;
-            let client = Arc::new(BridgeClient::new(NodeHostTransport::new(host)));
+            let client = Arc::new(BridgeClient::new(NodeProcessTransport::new(host)));
             let auth = client.auth_status(None).await?;
             let packages = client
                 .list_packages(cwd_for_packages.display().to_string())
@@ -340,14 +340,20 @@ fn workspace_root() -> PathBuf {
         .unwrap_or(manifest)
 }
 
-fn bootstrap_path() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("PI_GPUI_BOOTSTRAP") {
+fn process_host_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("PI_GPUI_PROCESS_HOST") {
         return Ok(PathBuf::from(path));
     }
     let root = workspace_root();
-    let bootstrap = root.join("node/dist/bootstrap.js");
-    ensure_node_dist_current(&root, &bootstrap)?;
-    Ok(bootstrap)
+    let process_host = root.join("node/dist/process_host.js");
+    ensure_node_dist_current(&root, &process_host)?;
+    Ok(process_host)
+}
+
+fn node_path() -> PathBuf {
+    std::env::var_os("PI_GPUI_NODE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("node"))
 }
 
 fn ensure_node_dist_current(root: &Path, bootstrap: &Path) -> Result<()> {
@@ -400,11 +406,4 @@ fn modified_time(path: &Path) -> Option<SystemTime> {
     fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .ok()
-}
-
-fn libnode_path() -> PathBuf {
-    std::env::var_os("PI_GPUI_LIBNODE")
-        .or_else(|| std::env::var_os("EDON_LIBNODE_PATH"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join(".libnode/v24.4.1/libnode.so"))
 }
