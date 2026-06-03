@@ -46,6 +46,49 @@ impl ApplyEvent for BackendState {
             BridgeEvent::SessionTextDelta { delta, .. } => {
                 self.transcript.push(TranscriptItem::TextDelta(delta));
             }
+            BridgeEvent::SessionToolStarted {
+                tool_call_id,
+                tool_name,
+                args,
+                ..
+            } => self
+                .transcript
+                .push(TranscriptItem::ToolUpdate(serde_json::json!({
+                    "type": "tool_execution_start",
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "args": args,
+                }))),
+            BridgeEvent::SessionToolUpdated {
+                tool_call_id,
+                tool_name,
+                args,
+                partial_result,
+                ..
+            } => self
+                .transcript
+                .push(TranscriptItem::ToolUpdate(serde_json::json!({
+                    "type": "tool_execution_update",
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "args": args,
+                    "partialResult": partial_result,
+                }))),
+            BridgeEvent::SessionToolFinished {
+                tool_call_id,
+                tool_name,
+                result,
+                is_error,
+                ..
+            } => self
+                .transcript
+                .push(TranscriptItem::ToolUpdate(serde_json::json!({
+                    "type": "tool_execution_end",
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "result": result,
+                    "isError": is_error,
+                }))),
             BridgeEvent::QueueUpdate { queue, .. } => self.snapshot.queue = queue,
             BridgeEvent::BashChunk { chunk } => self.bash_chunks.push(chunk),
             BridgeEvent::ExtensionUiRequest { request } => self.store_ui_request(request),

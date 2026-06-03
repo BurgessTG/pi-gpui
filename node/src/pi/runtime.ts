@@ -66,6 +66,35 @@ function errorMessage(error: unknown): string {
 	return String(error);
 }
 
+type ToolEventPayload = {
+	toolCallId: string;
+	toolName: string;
+	args: unknown;
+	partialResult?: unknown;
+	result?: unknown;
+	isError: boolean;
+};
+
+function toolEventPayload(event: unknown): ToolEventPayload {
+	const payload = event as {
+		toolCallId?: unknown;
+		toolName?: unknown;
+		args?: unknown;
+		partialResult?: unknown;
+		result?: unknown;
+		isError?: unknown;
+	};
+	return {
+		toolCallId:
+			typeof payload.toolCallId === "string" ? payload.toolCallId : "tool",
+		toolName: typeof payload.toolName === "string" ? payload.toolName : "tool",
+		args: payload.args ?? null,
+		partialResult: payload.partialResult,
+		result: payload.result,
+		isError: payload.isError === true,
+	};
+}
+
 export class PiRuntimeBackend {
 	private services: RuntimeServices | undefined;
 	private sessionRuntimes = new Map<string, RuntimeServices>();
@@ -661,6 +690,18 @@ export class PiRuntimeBackend {
 				this.emitSessionRunFinished(current);
 				return;
 			}
+			if (eventType === "tool_execution_start") {
+				this.emitSessionToolStarted(current, event);
+				return;
+			}
+			if (eventType === "tool_execution_update") {
+				this.emitSessionToolUpdated(current, event);
+				return;
+			}
+			if (eventType === "tool_execution_end") {
+				this.emitSessionToolFinished(current, event);
+				return;
+			}
 			this.emitSessionEvent(current, event);
 			if (eventType === "queue_update") {
 				const queueEvent = event as unknown as {
@@ -737,7 +778,10 @@ export class PiRuntimeBackend {
 		);
 	}
 
-	private emitSessionRunError(services: RuntimeServices, message: string): void {
+	private emitSessionRunError(
+		services: RuntimeServices,
+		message: string,
+	): void {
 		emitEvent(
 			eventEnvelope({
 				type: "sessionRunError",
@@ -758,6 +802,57 @@ export class PiRuntimeBackend {
 					sessionId: services.runtime.session.sessionId ?? null,
 					sessionFile: services.runtime.session.sessionFile ?? null,
 					delta,
+				},
+			}),
+		);
+	}
+
+	private emitSessionToolStarted(services: RuntimeServices, event: unknown): void {
+		const tool = toolEventPayload(event);
+		emitEvent(
+			eventEnvelope({
+				type: "sessionToolStarted",
+				payload: {
+					sessionId: services.runtime.session.sessionId ?? null,
+					sessionFile: services.runtime.session.sessionFile ?? null,
+					toolCallId: tool.toolCallId,
+					toolName: tool.toolName,
+					args: asJson(tool.args),
+				},
+			}),
+		);
+	}
+
+	private emitSessionToolUpdated(services: RuntimeServices, event: unknown): void {
+		const tool = toolEventPayload(event);
+		emitEvent(
+			eventEnvelope({
+				type: "sessionToolUpdated",
+				payload: {
+					sessionId: services.runtime.session.sessionId ?? null,
+					sessionFile: services.runtime.session.sessionFile ?? null,
+					toolCallId: tool.toolCallId,
+					toolName: tool.toolName,
+					args: asJson(tool.args),
+					partialResult:
+						tool.partialResult === undefined ? null : asJson(tool.partialResult),
+				},
+			}),
+		);
+	}
+
+	private emitSessionToolFinished(services: RuntimeServices, event: unknown): void {
+		const tool = toolEventPayload(event);
+		emitEvent(
+			eventEnvelope({
+				type: "sessionToolFinished",
+				payload: {
+					sessionId: services.runtime.session.sessionId ?? null,
+					sessionFile: services.runtime.session.sessionFile ?? null,
+					toolCallId: tool.toolCallId,
+					toolName: tool.toolName,
+					result: tool.result === undefined ? null : asJson(tool.result),
+					isError: tool.isError,
 				},
 			}),
 		);

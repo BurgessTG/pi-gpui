@@ -50,3 +50,19 @@ fn reducer_extracts_text_deltas() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+#[test]
+fn reducer_tracks_typed_tool_events() -> Result<(), Box<dyn std::error::Error>> {
+    let mut state = BackendState::new();
+    state.apply_event(BridgeEventEnvelope::new(BridgeEvent::SessionToolUpdated {
+        session_id: None,
+        session_file: None,
+        tool_call_id: "tool-1".to_owned(),
+        tool_name: "bash".to_owned(),
+        args: serde_json::json!({ "command": "pwd" }),
+        partial_result: Some(serde_json::json!({ "stdout": "/tmp" })),
+    }))?;
+    assert_eq!(state.transcript.len(), 1);
+    assert!(matches!(state.transcript[0], TranscriptItem::ToolUpdate(_)));
+    Ok(())
+}

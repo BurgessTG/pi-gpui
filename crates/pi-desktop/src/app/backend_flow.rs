@@ -224,6 +224,61 @@ impl PiDesktop {
                             "delta": delta,
                         }));
                 }
+                BridgeEvent::SessionToolStarted {
+                    session_id,
+                    session_file,
+                    tool_call_id,
+                    tool_name,
+                    args,
+                } => {
+                    session_events
+                        .entry((session_id, session_file))
+                        .or_default()
+                        .push(serde_json::json!({
+                            "type": "tool_execution_start",
+                            "toolCallId": tool_call_id,
+                            "toolName": tool_name,
+                            "args": args,
+                        }));
+                }
+                BridgeEvent::SessionToolUpdated {
+                    session_id,
+                    session_file,
+                    tool_call_id,
+                    tool_name,
+                    args,
+                    partial_result,
+                } => {
+                    session_events
+                        .entry((session_id, session_file))
+                        .or_default()
+                        .push(serde_json::json!({
+                            "type": "tool_execution_update",
+                            "toolCallId": tool_call_id,
+                            "toolName": tool_name,
+                            "args": args,
+                            "partialResult": partial_result,
+                        }));
+                }
+                BridgeEvent::SessionToolFinished {
+                    session_id,
+                    session_file,
+                    tool_call_id,
+                    tool_name,
+                    result,
+                    is_error,
+                } => {
+                    session_events
+                        .entry((session_id, session_file))
+                        .or_default()
+                        .push(serde_json::json!({
+                            "type": "tool_execution_end",
+                            "toolCallId": tool_call_id,
+                            "toolName": tool_name,
+                            "result": result,
+                            "isError": is_error,
+                        }));
+                }
                 event => self.apply_bridge_event(
                     BridgeEventEnvelope {
                         version: envelope.version,
@@ -348,6 +403,67 @@ impl PiDesktop {
                     vec![serde_json::json!({
                         "type": "assistant_text_delta",
                         "delta": delta,
+                    })],
+                    cx,
+                );
+            }
+            BridgeEvent::SessionToolStarted {
+                session_id,
+                session_file,
+                tool_call_id,
+                tool_name,
+                args,
+            } => {
+                self.apply_session_events(
+                    session_id.as_deref(),
+                    session_file.as_deref(),
+                    vec![serde_json::json!({
+                        "type": "tool_execution_start",
+                        "toolCallId": tool_call_id,
+                        "toolName": tool_name,
+                        "args": args,
+                    })],
+                    cx,
+                );
+            }
+            BridgeEvent::SessionToolUpdated {
+                session_id,
+                session_file,
+                tool_call_id,
+                tool_name,
+                args,
+                partial_result,
+            } => {
+                self.apply_session_events(
+                    session_id.as_deref(),
+                    session_file.as_deref(),
+                    vec![serde_json::json!({
+                        "type": "tool_execution_update",
+                        "toolCallId": tool_call_id,
+                        "toolName": tool_name,
+                        "args": args,
+                        "partialResult": partial_result,
+                    })],
+                    cx,
+                );
+            }
+            BridgeEvent::SessionToolFinished {
+                session_id,
+                session_file,
+                tool_call_id,
+                tool_name,
+                result,
+                is_error,
+            } => {
+                self.apply_session_events(
+                    session_id.as_deref(),
+                    session_file.as_deref(),
+                    vec![serde_json::json!({
+                        "type": "tool_execution_end",
+                        "toolCallId": tool_call_id,
+                        "toolName": tool_name,
+                        "result": result,
+                        "isError": is_error,
                     })],
                     cx,
                 );

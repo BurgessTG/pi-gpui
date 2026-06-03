@@ -60,6 +60,57 @@ pub enum BridgeEvent {
         session_file: Option<String>,
         delta: String,
     },
+    SessionToolStarted {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(rename = "sessionFile")]
+        #[ts(rename = "sessionFile")]
+        session_file: Option<String>,
+        #[serde(rename = "toolCallId")]
+        #[ts(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        #[ts(rename = "toolName")]
+        tool_name: String,
+        args: serde_json::Value,
+    },
+    SessionToolUpdated {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(rename = "sessionFile")]
+        #[ts(rename = "sessionFile")]
+        session_file: Option<String>,
+        #[serde(rename = "toolCallId")]
+        #[ts(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        #[ts(rename = "toolName")]
+        tool_name: String,
+        args: serde_json::Value,
+        #[serde(rename = "partialResult")]
+        #[ts(rename = "partialResult")]
+        partial_result: Option<serde_json::Value>,
+    },
+    SessionToolFinished {
+        #[serde(rename = "sessionId")]
+        #[ts(rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(rename = "sessionFile")]
+        #[ts(rename = "sessionFile")]
+        session_file: Option<String>,
+        #[serde(rename = "toolCallId")]
+        #[ts(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        #[ts(rename = "toolName")]
+        tool_name: String,
+        result: Option<serde_json::Value>,
+        #[serde(rename = "isError")]
+        #[ts(rename = "isError")]
+        is_error: bool,
+    },
     QueueUpdate {
         #[serde(rename = "sessionId")]
         #[ts(rename = "sessionId")]

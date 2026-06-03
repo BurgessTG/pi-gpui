@@ -16,7 +16,7 @@ pub use extension_ui::*;
 pub use response::*;
 pub use state::*;
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 #[derive(
     Debug,
