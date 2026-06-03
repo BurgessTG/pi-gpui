@@ -61,6 +61,11 @@ type RuntimeServices = {
 
 const MESSAGE_UPDATE_FLUSH_MS = 50;
 
+function errorMessage(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	return String(error);
+}
+
 export class PiRuntimeBackend {
 	private services: RuntimeServices | undefined;
 	private sessionRuntimes = new Map<string, RuntimeServices>();
@@ -91,12 +96,17 @@ export class PiRuntimeBackend {
 				const target = await this.runtimeForSessionPath(
 					command.payload.sessionPath ?? undefined,
 				);
-				await target.runtime.session.prompt(command.payload.text, {
-					images: mapImages(command.payload.images),
-					...(command.payload.streamingBehavior
-						? { streamingBehavior: command.payload.streamingBehavior }
-						: {}),
-				});
+				void target.runtime.session
+					.prompt(command.payload.text, {
+						images: mapImages(command.payload.images),
+						...(command.payload.streamingBehavior
+							? { streamingBehavior: command.payload.streamingBehavior }
+							: {}),
+					})
+					.catch((error: unknown) => {
+						this.cancelPendingMessageUpdate(target);
+						this.emitSessionRunError(target, errorMessage(error));
+					});
 				return { type: "ack" };
 			}
 			case "steer":
@@ -643,6 +653,14 @@ export class PiRuntimeBackend {
 				return;
 			}
 			this.flushPendingMessageUpdate(current);
+			if (eventType === "agent_start") {
+				this.emitSessionRunStarted(current);
+				return;
+			}
+			if (eventType === "agent_end") {
+				this.emitSessionRunFinished(current);
+				return;
+			}
 			this.emitSessionEvent(current, event);
 			if (eventType === "queue_update") {
 				const queueEvent = event as unknown as {
@@ -690,6 +708,43 @@ export class PiRuntimeBackend {
 					sessionId: services.runtime.session.sessionId ?? null,
 					sessionFile: services.runtime.session.sessionFile ?? null,
 					event: asJson(event),
+				},
+			}),
+		);
+	}
+
+	private emitSessionRunStarted(services: RuntimeServices): void {
+		emitEvent(
+			eventEnvelope({
+				type: "sessionRunStarted",
+				payload: {
+					sessionId: services.runtime.session.sessionId ?? null,
+					sessionFile: services.runtime.session.sessionFile ?? null,
+				},
+			}),
+		);
+	}
+
+	private emitSessionRunFinished(services: RuntimeServices): void {
+		emitEvent(
+			eventEnvelope({
+				type: "sessionRunFinished",
+				payload: {
+					sessionId: services.runtime.session.sessionId ?? null,
+					sessionFile: services.runtime.session.sessionFile ?? null,
+				},
+			}),
+		);
+	}
+
+	private emitSessionRunError(services: RuntimeServices, message: string): void {
+		emitEvent(
+			eventEnvelope({
+				type: "sessionRunError",
+				payload: {
+					sessionId: services.runtime.session.sessionId ?? null,
+					sessionFile: services.runtime.session.sessionFile ?? null,
+					message,
 				},
 			}),
 		);

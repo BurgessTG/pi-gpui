@@ -35,12 +35,12 @@ impl PiDesktop {
             return;
         };
         if !self.agent_ready() {
-            self.status = "Embedded Pi runtime is still starting.".into();
+            self.status = "Pi worker runtime is still starting.".into();
             cx.notify();
             return;
         }
         let Some(session) = self.backend.clone() else {
-            self.status = "Embedded Pi backend is not ready yet.".into();
+            self.status = "Pi worker backend is not ready yet.".into();
             cx.notify();
             return;
         };
@@ -108,25 +108,25 @@ impl PiDesktop {
                 })
                 .await;
             let _ = this.update(cx, |view, cx| {
-                view.finish_chat_prompt(prompt, result, cx);
-                view.start_next_queued_chat_prompt(cx);
+                view.finish_chat_prompt_submission(prompt, result, cx);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    fn finish_chat_prompt(
+    fn finish_chat_prompt_submission(
         &mut self,
         prompt: QueuedChatPrompt,
-        result: anyhow::Result<BackendData>,
+        result: anyhow::Result<()>,
         cx: &mut Context<Self>,
     ) {
         let key = (prompt.workspace_id, prompt.node_id);
         let Some(workspace_index) = self.workspace_index_for_id(prompt.workspace_id) else {
             self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
             self.streaming_nodes.remove(&key);
-            self.status = "Pi chat response arrived after its workspace was closed.".into();
+            self.status = "Pi chat submission returned after its workspace was closed.".into();
+            self.start_next_queued_chat_prompt(cx);
             return;
         };
         if self
@@ -135,24 +135,15 @@ impl PiDesktop {
         {
             self.remove_session_node_ui_state(prompt.workspace_id, prompt.node_id);
             self.streaming_nodes.remove(&key);
-            self.status = "Pi chat response arrived after its node was closed.".into();
+            self.status = "Pi chat submission returned after its node was closed.".into();
+            self.start_next_queued_chat_prompt(cx);
             return;
         }
         match result {
-            Ok(data) => {
-                let metadata = data
-                    .state
-                    .as_ref()
-                    .map(session_node_metadata)
-                    .unwrap_or_else(empty_session_node_metadata);
-                self.workspace_state.update_session_node_metadata(
-                    workspace_index,
-                    prompt.node_id,
-                    metadata,
-                );
-                self.update_chat_transcript(key, cx, ChatTranscript::mark_idle);
-                self.streaming_nodes.remove(&key);
-                self.apply_data(data, "Pi chat response complete.", cx);
+            Ok(()) => {
+                if self.streaming_nodes.contains(&key) {
+                    self.status = "Pi chat accepted; waiting for stream events…".into();
+                }
             }
             Err(error) => {
                 let message = format!("Pi chat failed: {error:#}");
@@ -161,11 +152,12 @@ impl PiDesktop {
                 });
                 self.streaming_nodes.remove(&key);
                 self.status = message.into();
+                self.start_next_queued_chat_prompt(cx);
             }
         }
     }
 
-    fn start_next_queued_chat_prompt(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn start_next_queued_chat_prompt(&mut self, cx: &mut Context<Self>) {
         if self.pending {
             return;
         }
@@ -272,7 +264,7 @@ impl PiDesktop {
 
         let Some(session) = self.backend.clone() else {
             self.editing_title = None;
-            self.status = "Embedded Pi backend is not ready yet.".into();
+            self.status = "Pi worker backend is not ready yet.".into();
             cx.notify();
             return;
         };
@@ -395,12 +387,12 @@ impl PiDesktop {
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.backend.clone() else {
-            self.status = "Embedded Pi backend is not ready yet.".into();
+            self.status = "Pi worker backend is not ready yet.".into();
             cx.notify();
             return;
         };
         if !self.agent_ready() {
-            self.status = "Embedded Pi runtime is still starting.".into();
+            self.status = "Pi worker runtime is still starting.".into();
             cx.notify();
             return;
         }

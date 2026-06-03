@@ -89,6 +89,9 @@ impl ChatTranscript {
                 self.active_assistant = None;
             }
             "agent_end" => self.mark_idle(),
+            "agent_error" => self.mark_error(
+                value_string(event, "message").unwrap_or_else(|| "Pi response failed".to_owned()),
+            ),
             "message_start" => self.observe_message_start(event.get("message")),
             "assistant_text_delta" => self.observe_assistant_text_delta(event),
             "message_update" => self.observe_message_update(event.get("message")),
@@ -552,6 +555,25 @@ mod tests {
             }]
         );
         assert!(transcript.is_streaming());
+    }
+
+    #[test]
+    fn transcript_marks_agent_error() {
+        let mut transcript = ChatTranscript::default();
+        transcript.observe_session_event(&serde_json::json!({ "type": "agent_start" }));
+        transcript.observe_session_event(&serde_json::json!({
+            "type": "agent_error",
+            "message": "boom"
+        }));
+
+        assert_eq!(
+            transcript.entries(),
+            &[ChatEntry::Assistant {
+                text: String::new(),
+                status: AssistantStatus::Error("boom".to_owned()),
+            }]
+        );
+        assert!(!transcript.is_streaming());
     }
 
     #[test]

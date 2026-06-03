@@ -47,6 +47,13 @@ impl NativeBridgeState {
         }
         let _event_result = self.events.send(event);
     }
+
+    pub fn fail_pending(&self, error: BridgeError) {
+        let pending = std::mem::take(&mut *self.pending.lock());
+        for sender in pending.into_values() {
+            let _send_result = sender.send(Err(error.clone()));
+        }
+    }
 }
 
 pub fn js_string_arg(ctx: &pi_edon::napi::CallContext<'_>) -> pi_edon::napi::Result<String> {

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use pi_bridge_types::{
-    BridgeCommand, BridgeCommandEnvelope, BridgeEventEnvelope, BridgeResponse, LogEvent, LogLevel,
-    ReadyEvent, RequestId,
+    BridgeCommand, BridgeCommandEnvelope, BridgeError, BridgeErrorCode, BridgeEvent,
+    BridgeEventEnvelope, BridgeResponse, LogEvent, LogLevel, ReadyEvent, RequestId,
 };
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
@@ -137,18 +137,28 @@ impl NodeProcessHost {
 
     pub async fn shutdown(&self) -> Result<()> {
         match self.request(BridgeCommand::Shutdown).await {
-            Ok(_response) => Ok(()),
-            Err(NodeHostError::Bridge(_bridge_error)) => Ok(()),
+            Ok(_) | Err(NodeHostError::Bridge(_)) => {
+                let _kill_result = self.child.lock().start_kill();
+                Ok(())
+            }
             Err(error) => Err(error),
         }
     }
 
     async fn dispatch_to_node(&self, envelope: &BridgeCommandEnvelope) -> Result<()> {
+        self.ensure_child_running()?;
         let line = serde_json::to_string(envelope)?;
         let mut stdin = self.stdin.lock().await;
         stdin.write_all(line.as_bytes()).await?;
         stdin.write_all(b"\n").await?;
         stdin.flush().await?;
+        Ok(())
+    }
+
+    fn ensure_child_running(&self) -> Result<()> {
+        if let Some(status) = self.child.lock().try_wait()? {
+            return Err(NodeHostError::ProcessExited(status.to_string()));
+        }
         Ok(())
     }
 }
@@ -162,25 +172,61 @@ impl Drop for NodeProcessHost {
 fn spawn_stdout_reader(stdout: tokio::process::ChildStdout, native: Arc<NativeBridgeState>) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-                continue;
-            };
-            if value.get("response").is_some() {
-                if let Ok(response) = serde_json::from_value(value) {
-                    native.complete_response(response);
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => handle_stdout_line(&native, &line),
+                Ok(None) => {
+                    fail_worker_io(
+                        &native,
+                        BridgeError::new(
+                            BridgeErrorCode::NodeRuntimeError,
+                            "Node worker stdout closed",
+                        ),
+                    );
+                    break;
                 }
-            } else if value.get("event").is_some()
-                && let Ok(event) = serde_json::from_value(value)
-            {
-                native.emit_event(event);
+                Err(error) => {
+                    fail_worker_io(
+                        &native,
+                        BridgeError::new(
+                            BridgeErrorCode::NodeRuntimeError,
+                            "failed to read Node worker stdout",
+                        )
+                        .with_details(error.to_string()),
+                    );
+                    break;
+                }
             }
         }
     });
+}
+
+fn handle_stdout_line(native: &NativeBridgeState, line: &str) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        native.emit_event(BridgeEventEnvelope::new(BridgeEvent::Log(LogEvent {
+            level: LogLevel::Warn,
+            message: format!("Ignoring non-JSON Node worker stdout: {trimmed}"),
+        })));
+        return;
+    };
+    if value.get("response").is_some() {
+        if let Ok(response) = serde_json::from_value(value) {
+            native.complete_response(response);
+        }
+    } else if value.get("event").is_some()
+        && let Ok(event) = serde_json::from_value(value)
+    {
+        native.emit_event(event);
+    }
+}
+
+fn fail_worker_io(native: &NativeBridgeState, error: BridgeError) {
+    native.fail_pending(error.clone());
+    native.emit_event(BridgeEventEnvelope::new(BridgeEvent::FatalError { error }));
 }
 
 fn spawn_stderr_reader(
@@ -194,12 +240,10 @@ fn spawn_stderr_reader(
             if message.is_empty() {
                 continue;
             }
-            let _send_result = events.send(BridgeEventEnvelope::new(
-                pi_bridge_types::BridgeEvent::Log(LogEvent {
-                    level: LogLevel::Info,
-                    message: message.to_owned(),
-                }),
-            ));
+            let _send_result = events.send(BridgeEventEnvelope::new(BridgeEvent::Log(LogEvent {
+                level: LogLevel::Info,
+                message: message.to_owned(),
+            })));
         }
     });
 }

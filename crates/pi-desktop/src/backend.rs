@@ -231,7 +231,7 @@ impl BackendSession {
         })
     }
 
-    pub fn prompt(&self, session_path: Option<String>, text: String) -> Result<BackendData> {
+    pub fn prompt(&self, session_path: Option<String>, text: String) -> Result<()> {
         self.ensure_agent_ready()?;
         let lock_key = session_path.as_deref().unwrap_or("__primary__").to_owned();
         let command_lock = self.session_command_lock(&lock_key);
@@ -239,15 +239,8 @@ impl BackendSession {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.runtime
-            .block_on(self.client.prompt_for_session(session_path.clone(), text))?;
-        if let Some(session_path) = session_path {
-            let state = self
-                .runtime
-                .block_on(self.client.session_state(session_path))?;
-            Ok(self.collect_data_with_state(state)?)
-        } else {
-            self.collect_data()
-        }
+            .block_on(self.client.prompt_for_session(session_path, text))?;
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -378,10 +371,10 @@ fn ensure_node_dist_current(root: &Path, bootstrap: &Path) -> Result<()> {
         .arg("build")
         .current_dir(&node_dir)
         .status()
-        .context("run npm build for embedded Pi node backend")?;
+        .context("run npm build for Pi node worker backend")?;
     anyhow::ensure!(
         status.success(),
-        "npm run build failed for embedded Pi node backend"
+        "npm run build failed for Pi node worker backend"
     );
     Ok(())
 }

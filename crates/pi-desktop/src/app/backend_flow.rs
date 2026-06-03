@@ -4,8 +4,8 @@ impl PiDesktop {
     pub(super) fn start_backend(&mut self, cx: &mut Context<Self>) {
         if self.backend.is_some() {
             self.run_backend(
-                "Refreshing embedded Pi backend…",
-                "Embedded Pi backend ready.",
+                "Refreshing Pi worker backend…",
+                "Pi worker backend ready.",
                 false,
                 |backend| backend.refresh(),
                 cx,
@@ -13,7 +13,7 @@ impl PiDesktop {
             return;
         }
         self.pending = true;
-        self.status = "Starting embedded Pi backend…".into();
+        self.status = "Starting Pi worker backend…".into();
         cx.notify();
         let cwd = self.cwd.clone();
         cx.spawn(async move |this, cx| {
@@ -42,7 +42,7 @@ impl PiDesktop {
         self.subscribe_backend_events(cx);
         self.apply_data(
             snapshot.data,
-            "Provider auth loaded. Starting embedded Pi runtime…",
+            "Provider auth loaded. Starting Pi worker runtime…",
             cx,
         );
         self.start_agent_runtime(cx);
@@ -56,7 +56,7 @@ impl PiDesktop {
             return;
         };
         let cwd = self.cwd.clone();
-        self.status = "Provider auth loaded. Starting embedded Pi runtime…".into();
+        self.status = "Provider auth loaded. Starting Pi worker runtime…".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -64,7 +64,7 @@ impl PiDesktop {
                 .await;
             let _ = this.update(cx, |view, cx| {
                 match result {
-                    Ok(data) => view.apply_data(data, "Embedded Pi runtime ready.", cx),
+                    Ok(data) => view.apply_data(data, "Pi worker runtime ready.", cx),
                     Err(error) => {
                         view.status = format!(
                             "Provider auth loaded, but Pi runtime failed to start: {error:#}"
@@ -180,6 +180,37 @@ impl PiDesktop {
                         .or_default()
                         .push(event);
                 }
+                BridgeEvent::SessionRunStarted {
+                    session_id,
+                    session_file,
+                } => {
+                    session_events
+                        .entry((session_id, session_file))
+                        .or_default()
+                        .push(serde_json::json!({ "type": "agent_start" }));
+                }
+                BridgeEvent::SessionRunFinished {
+                    session_id,
+                    session_file,
+                } => {
+                    session_events
+                        .entry((session_id, session_file))
+                        .or_default()
+                        .push(serde_json::json!({ "type": "agent_end" }));
+                }
+                BridgeEvent::SessionRunError {
+                    session_id,
+                    session_file,
+                    message,
+                } => {
+                    session_events
+                        .entry((session_id, session_file))
+                        .or_default()
+                        .push(serde_json::json!({
+                            "type": "agent_error",
+                            "message": message,
+                        }));
+                }
                 BridgeEvent::SessionTextDelta {
                     session_id,
                     session_file,
@@ -229,6 +260,9 @@ impl PiDesktop {
         if let Some(status) = status {
             self.status = status.into();
         }
+        if events.iter().any(is_terminal_chat_event) && self.streaming_nodes.remove(&key) {
+            self.start_next_queued_chat_prompt(cx);
+        }
     }
 
     fn node_key_for_session_event(
@@ -263,6 +297,43 @@ impl PiDesktop {
                     session_id.as_deref(),
                     session_file.as_deref(),
                     vec![event],
+                    cx,
+                );
+            }
+            BridgeEvent::SessionRunStarted {
+                session_id,
+                session_file,
+            } => {
+                self.apply_session_events(
+                    session_id.as_deref(),
+                    session_file.as_deref(),
+                    vec![serde_json::json!({ "type": "agent_start" })],
+                    cx,
+                );
+            }
+            BridgeEvent::SessionRunFinished {
+                session_id,
+                session_file,
+            } => {
+                self.apply_session_events(
+                    session_id.as_deref(),
+                    session_file.as_deref(),
+                    vec![serde_json::json!({ "type": "agent_end" })],
+                    cx,
+                );
+            }
+            BridgeEvent::SessionRunError {
+                session_id,
+                session_file,
+                message,
+            } => {
+                self.apply_session_events(
+                    session_id.as_deref(),
+                    session_file.as_deref(),
+                    vec![serde_json::json!({
+                        "type": "agent_error",
+                        "message": message,
+                    })],
                     cx,
                 );
             }

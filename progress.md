@@ -18,6 +18,8 @@ Complete locally; validated end-to-end.
 - Added a second performance pass after live lag reports: coalesced SDK `message_update` events in Node before JSON crossing, grouped Rust bridge events by session target across each batch, and deferred markdown rendering for actively streaming assistant text until completion.
 - Started the production architecture goal by moving Pi Desktop's default backend from embedded libnode to an external Node process host over JSONL stdio, keeping GPUI as a UI-only process boundary for the first worker-process runtime slice.
 - Replaced token-rate full assistant message updates during streaming with coalesced compact `assistant_text_delta` events; final message events still preserve complete markdown/tool fidelity.
+- Converted prompt submission to immediate ACK plus typed session run lifecycle events (`sessionRunStarted`, `sessionRunFinished`, `sessionRunError`), so long-running agent turns no longer keep bridge requests open.
+- Hardened the external Node worker lifecycle: worker stdout failure now fails pending requests and emits a fatal backend event, and process-host shutdown exits after runtime disposal.
 
 ## Validation
 - `cargo fmt --check`

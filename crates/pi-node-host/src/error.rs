@@ -16,6 +16,8 @@ pub enum NodeHostError {
     MissingProcessStdout,
     #[error("node process stderr is unavailable")]
     MissingProcessStderr,
+    #[error("node process exited: {0}")]
+    ProcessExited(String),
     #[error("protocol error: {0}")]
     Protocol(#[from] pi_bridge_types::ProtocolError),
     #[error("json error: {0}")]

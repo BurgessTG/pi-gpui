@@ -24,6 +24,25 @@ impl ApplyEvent for BackendState {
             BridgeEvent::Diagnostics { diagnostics } => self.snapshot.diagnostics = diagnostics,
             BridgeEvent::StateSnapshot { state } => self.snapshot = state,
             BridgeEvent::PiSessionEvent { event, .. } => self.apply_session_event(event),
+            BridgeEvent::SessionRunStarted { .. } => {
+                self.transcript
+                    .push(TranscriptItem::SessionEvent(serde_json::json!({
+                        "type": "agent_start"
+                    })))
+            }
+            BridgeEvent::SessionRunFinished { .. } => {
+                self.transcript
+                    .push(TranscriptItem::SessionEvent(serde_json::json!({
+                        "type": "agent_end"
+                    })))
+            }
+            BridgeEvent::SessionRunError { message, .. } => {
+                self.transcript
+                    .push(TranscriptItem::SessionEvent(serde_json::json!({
+                        "type": "agent_error",
+                        "message": message,
+                    })))
+            }
             BridgeEvent::SessionTextDelta { delta, .. } => {
                 self.transcript.push(TranscriptItem::TextDelta(delta));
             }

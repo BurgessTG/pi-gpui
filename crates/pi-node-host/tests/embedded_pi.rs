@@ -87,6 +87,17 @@ where
     .map_err(|_elapsed| test_error("timed out waiting for event"))?
 }
 
+async fn wait_for_run_finished(
+    events: &mut BroadcastStream<BridgeEventEnvelope>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    next_matching(events, |event| match event.event {
+        BridgeEvent::SessionRunFinished { .. } => Some(Ok(())),
+        BridgeEvent::SessionRunError { message, .. } => Some(Err(test_error(message))),
+        _other => None,
+    })
+    .await?
+}
+
 fn first_json_id(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::Object(object) => object
@@ -112,6 +123,7 @@ async fn embedded_node_runs_pi_sdk_with_faux_provider() -> Result<(), Box<dyn st
 
     let state = init_host(&host, &temp, false).await?;
     assert!(state.initialized);
+    let mut events = host.subscribe();
     assert!(matches!(
         host.request(BridgeCommand::Prompt(PromptCommand {
             session_path: None,
@@ -122,6 +134,7 @@ async fn embedded_node_runs_pi_sdk_with_faux_provider() -> Result<(), Box<dyn st
         .await?,
         BridgeResponse::Ack
     ));
+    wait_for_run_finished(&mut events).await?;
     let BridgeResponse::State { state } = host.request(BridgeCommand::GetState).await? else {
         return Err(test_error("expected state response"));
     };
@@ -338,6 +351,7 @@ async fn embedded_backend_handles_core_commands() -> Result<(), Box<dyn std::err
         BridgeResponse::Ack
     ));
 
+    let mut events = host.subscribe();
     assert!(matches!(
         host.request(BridgeCommand::Prompt(PromptCommand {
             session_path: None,
@@ -348,6 +362,7 @@ async fn embedded_backend_handles_core_commands() -> Result<(), Box<dyn std::err
         .await?,
         BridgeResponse::Ack
     ));
+    wait_for_run_finished(&mut events).await?;
     assert!(matches!(
         host.request(BridgeCommand::Compact(CompactCommand {
             custom_instructions: Some("keep this very short".to_owned()),
@@ -411,6 +426,7 @@ async fn embedded_backend_handles_session_lifecycle() -> Result<(), Box<dyn std:
     let host = pi_node_host::NodeHost::start(config).await?;
     host.wait_until_ready().await?;
     init_host(&host, &temp, false).await?;
+    let mut events = host.subscribe();
     host.request(BridgeCommand::Prompt(PromptCommand {
         session_path: None,
         text: "Create a session tree".to_owned(),
@@ -418,6 +434,7 @@ async fn embedded_backend_handles_session_lifecycle() -> Result<(), Box<dyn std:
         streaming_behavior: None,
     }))
     .await?;
+    wait_for_run_finished(&mut events).await?;
 
     let BridgeResponse::State { state } = host.request(BridgeCommand::GetState).await? else {
         return Err(test_error("expected state response"));
@@ -790,6 +807,7 @@ async fn embedded_backend_can_use_real_provider_when_configured()
     ));
     let expected = std::env::var("PI_GPUI_REAL_EXPECT")
         .unwrap_or_else(|_missing| "pi-gpui-real-provider-ok".to_owned());
+    let mut events = host.subscribe();
     host.request(BridgeCommand::Prompt(PromptCommand {
         session_path: None,
         text: std::env::var("PI_GPUI_REAL_PROMPT")
@@ -798,6 +816,7 @@ async fn embedded_backend_can_use_real_provider_when_configured()
         streaming_behavior: None,
     }))
     .await?;
+    wait_for_run_finished(&mut events).await?;
     let BridgeResponse::State { state } = host.request(BridgeCommand::GetState).await? else {
         return Err(test_error("expected state response"));
     };

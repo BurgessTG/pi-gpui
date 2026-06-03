@@ -310,7 +310,7 @@ impl PiDesktop {
             pending_delete_folder: None,
             showing_delete_folder_confirmation: false,
             workspace_picker_root,
-            status: "Starting embedded Pi backend…".into(),
+            status: "Starting Pi worker backend…".into(),
             pending: true,
             event_render_scheduled: false,
             canvas_render_scheduled: false,
@@ -654,6 +654,13 @@ fn auth_update_status(update: &AuthFlowUpdate) -> String {
     message
 }
 
+fn is_terminal_chat_event(event: &serde_json::Value) -> bool {
+    matches!(
+        event.get("type").and_then(serde_json::Value::as_str),
+        Some("agent_end" | "agent_error")
+    )
+}
+
 fn chat_event_status(event: &serde_json::Value) -> String {
     let event_type = event
         .get("type")
@@ -662,6 +669,13 @@ fn chat_event_status(event: &serde_json::Value) -> String {
     match event_type {
         "agent_start" => "Pi is working…".to_owned(),
         "agent_end" => "Pi idle.".to_owned(),
+        "agent_error" => format!(
+            "Pi chat failed: {}",
+            event
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown error")
+        ),
         "message_start" | "message_update" | "assistant_text_delta" => {
             "Pi is responding…".to_owned()
         }

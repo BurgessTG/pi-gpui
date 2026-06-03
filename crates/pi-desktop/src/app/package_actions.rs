@@ -6,7 +6,7 @@ impl PiDesktop {
     pub(crate) fn search_packages(&mut self, cx: &mut Context<Self>) {
         let query = self.package_search_input.read(cx).value().trim().to_owned();
         let Some(session) = self.backend.clone() else {
-            self.status = "Embedded Pi backend is not ready yet.".into();
+            self.status = "Pi worker backend is not ready yet.".into();
             cx.notify();
             return;
         };
@@ -59,7 +59,7 @@ impl PiDesktop {
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.backend.clone() else {
-            self.status = "Embedded Pi backend is not ready yet.".into();
+            self.status = "Pi worker backend is not ready yet.".into();
             cx.notify();
             return;
         };
@@ -104,7 +104,7 @@ impl PiDesktop {
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.backend.clone() else {
-            self.status = "Embedded Pi backend is not ready yet.".into();
+            self.status = "Pi worker backend is not ready yet.".into();
             cx.notify();
             return;
         };

@@ -50,6 +50,7 @@ async function dispatchLine(line: string): Promise<void> {
 			typeof bridgeDispatcher.dispatch
 		>[0];
 		writeJsonLine(await bridgeDispatcher.dispatch(envelope));
+		if (envelope.command.type === "shutdown") process.exit(0);
 	} catch (error) {
 		writeJsonLine(
 			eventEnvelope({
@@ -71,9 +72,11 @@ async function dispatchLine(line: string): Promise<void> {
 }
 
 process.on("SIGTERM", () => {
-	void bridgeDispatcher.dispatch({
-		version: PROTOCOL_VERSION,
-		requestId: "shutdown",
-		command: { type: "shutdown" },
-	});
+	void bridgeDispatcher
+		.dispatch({
+			version: PROTOCOL_VERSION,
+			requestId: "shutdown",
+			command: { type: "shutdown" },
+		})
+		.finally(() => process.exit(0));
 });
