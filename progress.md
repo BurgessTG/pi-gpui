@@ -28,6 +28,7 @@ Complete locally; validated end-to-end.
 - Added bounded Node worker IPC backpressure via `NodeProcessHostConfig::max_pending_requests` (default 256) to prevent unbounded pending request growth.
 - Wired installed package canvas-node manifests into Pi Desktop's canvas node registry on backend data refresh.
 - Added env-gated canvas next-frame latency tracing (`PI_WORKSPACES_FRAME_TRACE=1`) to measure pan/zoom/input-driven scheduling latency.
+- Added `NodeWorkerPool` and routed targeted session prompts/state/name updates into lazily-started external Node session workers, while app/auth/package commands stay on the primary worker; worker count is bounded by `PI_GPUI_MAX_SESSION_WORKERS`.
 
 ## Validation
 - `cargo fmt --check`

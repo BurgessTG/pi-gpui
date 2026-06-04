@@ -40,6 +40,7 @@ Build Pi Workspaces as an Excalidraw-class infinite canvas where users can creat
 - Node worker IPC now enforces a bounded pending-request limit (`NodeProcessHostConfig::max_pending_requests`, default 256) and returns a retryable backpressure error instead of allowing unbounded request buildup.
 - Pi Desktop now rebuilds the canvas node registry from installed package manifests on backend data refresh, giving package-provided canvas nodes a typed registration path alongside built-in session nodes.
 - Added env-gated next-frame latency instrumentation (`PI_WORKSPACES_FRAME_TRACE=1`) for canvas pan/zoom/input-driven frame scheduling, complementing render and bridge trace counters.
+- Added a Rust-side `NodeWorkerPool` that keeps the primary worker for app/auth/package commands and lazily starts separate external Node worker processes for targeted session prompts/state/name updates, bounded by `PI_GPUI_MAX_SESSION_WORKERS`.
 
 ## Next milestones
 

@@ -11,13 +11,13 @@ use pi_bridge_types::{
     AuthFlowUpdate, BridgeEvent, BridgeEventEnvelope, CoreStateSnapshot, ForkPosition, InitCommand,
     InstalledPackage, OAuthLoginMethod, PackageSearchResponse, ProviderAuthStatus, SessionTarget,
 };
-use pi_sdk_bridge::{BridgeClient, NodeProcessTransport};
+use pi_sdk_bridge::{BridgeClient, NodeWorkerPoolTransport};
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt as _;
 
 pub struct BackendSession {
     runtime: tokio::runtime::Runtime,
-    client: Arc<BridgeClient<NodeProcessTransport>>,
+    client: Arc<BridgeClient<NodeWorkerPoolTransport>>,
     auth_updates: broadcast::Sender<AuthFlowUpdate>,
     event_updates: broadcast::Sender<BridgeEventEnvelope>,
     agent_ready: AtomicBool,
@@ -57,10 +57,13 @@ impl BackendSession {
         let bridge_events = event_updates.clone();
         let cwd_for_packages = _cwd.clone();
         let (client, auth, packages) = runtime.block_on(async move {
-            let mut config = pi_node_host::NodeProcessHostConfig::new(node_path, process_host_path);
-            config.request_timeout = Duration::from_secs(20 * 60);
-            let host = Arc::new(pi_node_host::NodeProcessHost::start(config).await?);
-            let mut events = host.subscribe();
+            let mut process_config =
+                pi_node_host::NodeProcessHostConfig::new(node_path, process_host_path);
+            process_config.request_timeout = Duration::from_secs(20 * 60);
+            let mut pool_config = pi_node_host::NodeWorkerPoolConfig::new(process_config);
+            pool_config.max_session_workers = max_session_workers();
+            let pool = Arc::new(pi_node_host::NodeWorkerPool::start(pool_config).await?);
+            let mut events = pool.subscribe();
             tokio::spawn(async move {
                 while let Some(Ok(event)) = events.next().await {
                     if let BridgeEvent::AuthFlowUpdate { update } = &event.event {
@@ -69,8 +72,7 @@ impl BackendSession {
                     let _ = bridge_events.send(event);
                 }
             });
-            host.wait_until_ready().await?;
-            let client = Arc::new(BridgeClient::new(NodeProcessTransport::new(host)));
+            let client = Arc::new(BridgeClient::new(NodeWorkerPoolTransport::new(pool)));
             let auth = client.auth_status(None).await?;
             let packages = client
                 .list_packages(cwd_for_packages.display().to_string())
@@ -347,6 +349,14 @@ fn node_path() -> PathBuf {
     std::env::var_os("PI_GPUI_NODE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("node"))
+}
+
+fn max_session_workers() -> usize {
+    std::env::var("PI_GPUI_MAX_SESSION_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|workers| *workers > 0)
+        .unwrap_or(16)
 }
 
 fn ensure_node_dist_current(root: &Path, bootstrap: &Path) -> Result<()> {
